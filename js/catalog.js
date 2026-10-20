@@ -258,6 +258,7 @@ async function serverAnswers(url) {
 // Esito di ogni archivio:
 //   ok / empty   risponde (con o senza il libro)
 //   quota        limite di richieste esaurito (429, oppure 403 "Daily Limit…")
+//   temporary    guasto temporaneo del server (errori 5xx, come il 503 "backendFailed" di Google)
 //   badkey       Google rifiuta la chiave o la configurazione del progetto
 //   blocked      risponde, ma il browser non può leggere la risposta
 //   unreachable  nessuna risposta (rete, DNS, tempo scaduto)
@@ -271,6 +272,7 @@ function classify(err, usedKey) {
     if (err.status === 429 || /RESOURCE_EXHAUSTED|rateLimitExceeded|dailyLimitExceeded|quotaExceeded|quota|Daily Limit/i.test(text)) {
       return { kind: 'quota', detail };
     }
+    if (err.status >= 500) return { kind: 'temporary', detail };
     if (/API_KEY|API key|keyInvalid|referer|referrer|SERVICE_DISABLED|has not been used|is disabled/i.test(text)) {
       return { kind: 'badkey', detail };
     }
@@ -286,6 +288,7 @@ const STATUS_TEXT = {
   ok: 'funziona',
   empty: 'funziona',
   quota: 'limite di richieste esaurito',
+  temporary: 'guasto temporaneo del server',
   badkey: 'rifiuta la chiave',
   blocked: 'risponde, ma il browser non può leggere la risposta',
   unreachable: 'non raggiungibile',
@@ -322,9 +325,58 @@ function fromGoogle(item) {
   };
 }
 
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const isTransient = err => err instanceof HttpError && err.status >= 500;
+
+// Google Books a volte risponde 503 "Service temporarily unavailable" (backendFailed)
+// in modo intermittente: la stessa richiesta poco dopo riesce. Si riprova quindi con
+// attese crescenti (exponential backoff) più un po' di casualità ("jitter"), così
+// tanti telefoni non riprovano tutti nello stesso istante.
+async function googleFetch(query, extra = '') {
+  const delays = [0, 600, 1500];
+  let lastErr;
+  for (const d of delays) {
+    if (d) await sleep(d + Math.random() * 300);
+    try {
+      return await fetchJson(googleUrl(query, extra));
+    } catch (err) {
+      lastErr = err;
+      if (!isTransient(err)) throw err; // errori "veri" (chiave, limite…): inutile riprovare
+    }
+  }
+  throw lastErr;
+}
+
+// ISBN-13 "978…" -> ISBN-10 (stesso libro, vecchio formato)
+export function toIsbn10(isbn13) {
+  if (!/^978\d{10}$/.test(isbn13)) return null;
+  const core = isbn13.slice(3, 12);
+  let sum = 0;
+  for (let i = 0; i < 9; i++) sum += (10 - i) * +core[i];
+  const c = (11 - (sum % 11)) % 11;
+  return core + (c === 10 ? 'X' : String(c));
+}
+
+function hasIsbn(item, ...isbns) {
+  const ids = ((item.volumeInfo || {}).industryIdentifiers || []).map(i => cleanIsbn(i.identifier));
+  return isbns.some(x => x && ids.includes(x));
+}
+
 async function googleByIsbn(isbn) {
-  const g = await fetchJson(googleUrl('isbn:' + isbn));
-  return g.items && g.items.length ? fromGoogle(g.items[0]) : null;
+  const isbn10 = toIsbn10(isbn);
+  let g, exact = true;
+  try {
+    g = await googleFetch('isbn:' + isbn);
+  } catch (err) {
+    if (!isTransient(err)) throw err;
+    // Google continua a fallire su questa ricerca: provo la stessa domanda in un'altra forma
+    exact = !!isbn10;
+    g = await googleFetch(isbn10 ? 'isbn:' + isbn10 : isbn);
+  }
+  const items = g.items || [];
+  // Con la ricerca generica possono arrivare libri diversi: tengo solo quello con lo stesso ISBN
+  const match = items.find(it => hasIsbn(it, isbn, isbn10)) || (exact ? items[0] : null);
+  return match ? fromGoogle(match) : null;
 }
 
 async function openLibraryByIsbn(isbn) {
@@ -372,7 +424,7 @@ function merge(base, extra) {
 }
 
 // Restituisce { book, outcome, status, details, detail }
-// outcome: found | notfound | quota | badkey | blocked | error | unreachable | offline
+// outcome: found | notfound | quota | temporary | badkey | blocked | error | unreachable | offline
 export async function lookupIsbn(raw) {
   const isbn = cleanIsbn(raw);
   const usedKey = !!getGoogleKey();
@@ -404,7 +456,7 @@ export async function lookupIsbn(raw) {
   }
   const g = status.google;
   let outcome = 'notfound';
-  if (['quota', 'badkey', 'blocked', 'error'].includes(g)) outcome = g;
+  if (['quota', 'temporary', 'badkey', 'blocked', 'error'].includes(g)) outcome = g;
   else if (g === 'unreachable') outcome = Object.values(status).every(v => v === 'unreachable') ? 'offline' : 'unreachable';
   return { book: null, outcome, status, details, detail: details.google || '' };
 }
@@ -416,7 +468,7 @@ export async function searchByText(title, author) {
   if (!q) return { results: [], outcome: 'notfound' };
   let google = { kind: 'empty', detail: '' };
   try {
-    const g = await fetchJson(googleUrl(encodeURIComponent(q), '&maxResults=6'));
+    const g = await googleFetch(encodeURIComponent(q), '&maxResults=6');
     const results = (g.items || []).map(fromGoogle);
     if (results.length) return { results, outcome: 'found' };
   } catch (e) {

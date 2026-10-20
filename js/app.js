@@ -8,7 +8,7 @@ import { barcodeSupported, scanIsbn } from './scanner.js';
 import { ocrReady, downloadOcr, removeOcr, recognize } from './ocr.js';
 import { buildPdf } from './pdf.js';
 
-const VERSION = '1.3.0';
+const VERSION = '1.4.0';
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -26,6 +26,7 @@ const LOOKUP_MSG = {
   badkey: 'Google Books rifiuta la chiave{d}. Apri le Impostazioni e premi «Verifica gli archivi».',
   blocked: 'Google Books risponde, ma il telefono non riesce a leggere la risposta: di solito dipende dalla configurazione della chiave. Apri le Impostazioni e premi «Verifica gli archivi».',
   error: 'Google Books ha risposto con un errore{d}, e gli altri archivi non hanno questo libro.',
+  temporary: 'Google Books ha un guasto temporaneo{d}: non dipende da te né dalla chiave. Ho già riprovato qualche volta; riprova tra poco, oppure salvalo pure anche senza titolo e completalo dopo con «Completa ora».',
   unreachable: 'Il telefono non riesce a contattare Google Books, e gli altri archivi non hanno questo libro. Salvalo pure anche senza titolo: completerai i dati più tardi con «Completa ora».',
   offline: 'Il telefono non raggiunge nessun archivio: controlla la connessione. Salvalo pure anche senza titolo: completerai i dati più tardi con «Completa ora».',
   notfound: 'Questo ISBN non compare negli archivi online. Fotografa la copertina per leggere titolo e autore, oppure compila a mano.',
@@ -37,7 +38,7 @@ function showLookupHint(outcome, detail) {
   const h = $('#formHint');
   h.textContent = lookupMessage(outcome, detail);
   if (outcome === 'notfound') return;
-  const keyBtn = ['quota', 'badkey', 'blocked', 'error'].includes(outcome)
+  const keyBtn = ['badkey', 'blocked', 'error'].includes(outcome) || (outcome === 'quota' && !getGoogleKey())
     ? '<button type="button" class="btn ghost small" data-act="key">Controlla la chiave</button>' : '';
   h.insertAdjacentHTML('beforeend',
     `<span class="hint-actions">${keyBtn}<button type="button" class="btn small" data-act="retry">Riprova la ricerca</button></span>`);
@@ -725,6 +726,7 @@ $('#btnComplete').addEventListener('click', async () => {
     badkey: 'Google rifiuta la chiave: premi «Verifica gli archivi» nelle Impostazioni',
     blocked: 'Google non risponde in modo leggibile: premi «Verifica gli archivi» nelle Impostazioni',
     error: 'Google Books ha risposto con un errore, riprova più tardi',
+    temporary: 'Google Books ha un guasto temporaneo, riprova più tardi',
     unreachable: 'Google Books non raggiungibile, riprova più tardi',
     offline: 'archivi non raggiungibili: controlla la connessione',
   }[problem] || 'riprova più tardi');
@@ -845,6 +847,7 @@ async function runLookupTest() {
     badkey: 'Google rifiuta la chiave: il motivo è nel suo messaggio qui sopra. Controlla nella console che la Books API sia abilitata nello stesso progetto della chiave, e che la restrizione del sito sia https://ronny421.github.io/* . Dopo ogni modifica aspetta qualche minuto.',
     blocked: 'Google risponde, ma il browser non può leggere la risposta. Prova a togliere per qualche minuto le restrizioni della chiave: se così funziona, il problema è lì.',
     error: 'Google risponde con un errore: il motivo è nel messaggio qui sopra.',
+    temporary: 'Google Books ha un guasto temporaneo dei suoi server: non dipende da te né dalla chiave. Riprova tra qualche minuto.',
     unreachable: olWorks
       ? 'Internet funziona, ma il telefono non riesce a contattare Google. Succede con alcuni blocchi pubblicitari, o con il «DNS privato» nelle impostazioni di rete di Android.'
       : 'Il telefono non raggiunge gli archivi: controlla la connessione.',
