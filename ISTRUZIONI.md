@@ -57,6 +57,14 @@ in Impostazioni → «Ricerca dei dati online» trovi i passaggi e il pulsante
 La chiave resta salvata solo sul telefono: non va mai scritta nei file del
 repository, che è pubblico.
 
+## Libri appena usciti
+
+Gli archivi online aggiungono i libri nuovi qualche giorno o settimana dopo
+l'uscita. Se un ISBN non viene trovato, salvalo pure anche solo con il codice:
+Scaffale riprova da sola una volta al giorno, all'apertura, e riempie i campi
+vuoti appena il libro compare (senza toccare quelli scritti da te). Per avere
+subito titolo e autore, nel modulo tocca «Copertina» e fotografala.
+
 ## Farla installare a un'altra persona
 
 In Impostazioni → «Invita qualcuno» l'app crea un link da mandare (per esempio su

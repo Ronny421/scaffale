@@ -399,21 +399,32 @@ function hasIsbn(item, ...isbns) {
   return isbns.some(x => x && ids.includes(x));
 }
 
+// Si cerca il libro in tre forme: ISBN-13, ISBN-10, numero semplice. L'indice "isbn:" di
+// Google a volte non trova un libro che la ricerca semplice trova; in quel caso si accetta
+// solo un risultato che riporti esattamente lo stesso codice.
 async function googleByIsbn(isbn) {
   const isbn10 = toIsbn10(isbn);
-  let g, exact = true;
-  try {
-    g = await googleFetch('isbn:' + isbn);
-  } catch (err) {
-    if (!isTransient(err)) throw err;
-    // Google continua a fallire su questa ricerca: provo la stessa domanda in un'altra forma
-    exact = !!isbn10;
-    g = await googleFetch(isbn10 ? 'isbn:' + isbn10 : isbn);
+  const attempts = [['isbn:' + isbn, true]];
+  if (isbn10) attempts.push(['isbn:' + isbn10, true]);
+  attempts.push([isbn, false]);
+  let lastErr = null, transient = 0;
+  for (const [query, exact] of attempts) {
+    let g;
+    try {
+      g = await googleFetch(query);
+    } catch (err) {
+      if (!isTransient(err)) throw err;
+      lastErr = err;
+      if (++transient >= 2) break; // Google è proprio in difficoltà: inutile insistere
+      continue;
+    }
+    const items = g.items || [];
+    const match = items.find(it => hasIsbn(it, isbn, isbn10)) || (exact ? items[0] : null);
+    if (match) return fromGoogle(match);
   }
-  const items = g.items || [];
-  // Con la ricerca generica possono arrivare libri diversi: tengo solo quello con lo stesso ISBN
-  const match = items.find(it => hasIsbn(it, isbn, isbn10)) || (exact ? items[0] : null);
-  return match ? fromGoogle(match) : null;
+  // Se qualche tentativo è fallito per un guasto, non si può dire che il libro non ci sia
+  if (lastErr) throw lastErr;
+  return null;
 }
 
 async function openLibraryByIsbn(isbn) {

@@ -8,7 +8,7 @@ import { barcodeSupported, scanIsbn } from './scanner.js';
 import { ocrReady, downloadOcr, removeOcr, recognize } from './ocr.js';
 import { buildPdf } from './pdf.js';
 
-const VERSION = '1.5.0';
+const VERSION = '1.6.0';
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -43,7 +43,7 @@ const LOOKUP_MSG = {
   temporary: 'Google Books ha un guasto temporaneo{d}: non dipende da te né dalla chiave. Ho già riprovato qualche volta; riprova tra poco, oppure salvalo pure anche senza titolo e completalo dopo con «Completa ora».',
   unreachable: 'Il telefono non riesce a contattare Google Books, e gli altri archivi non hanno questo libro. Salvalo pure anche senza titolo: completerai i dati più tardi con «Completa ora».',
   offline: 'Il telefono non raggiunge nessun archivio: controlla la connessione. Salvalo pure anche senza titolo: completerai i dati più tardi con «Completa ora».',
-  notfound: 'Questo ISBN non compare negli archivi online. Fotografa la copertina per leggere titolo e autore, oppure compila a mano.',
+  notfound: 'Questo ISBN non compare ancora negli archivi online. Succede soprattutto con i libri appena usciti: gli archivi si aggiornano dopo qualche giorno o settimana. Salvalo pure anche solo con l\'ISBN, Scaffale riproverà da sola ogni giorno. Per avere subito titolo e autore, tocca «Copertina» e fotografala.',
 };
 function lookupMessage(outcome, detail) {
   return (LOOKUP_MSG[outcome] || LOOKUP_MSG.notfound).replace('{d}', detail ? ` («${detail}»)` : '');
@@ -495,6 +495,7 @@ $('#coverInput').addEventListener('change', async e => {
   formCtx.cover = await resizeImage(f);
   formCtx.coverChanged = true;
   setCoverPreview(formCtx.cover);
+  if (!form.elements.title.value.trim()) runOcr(f);
 });
 
 form.addEventListener('submit', async e => {
@@ -588,7 +589,10 @@ async function runOcr(file) {
       if (navigator.onLine) {
         const { book, outcome, detail } = await lookupIsbn(found.isbn);
         if (book) { fillForm(book, { overwrite: false }); await maybeCover(book.coverUrls); }
-        else if (outcome !== 'notfound') { formCtx.needsLookup = true; toast(lookupMessage(outcome, detail), 7000); }
+        else {
+          formCtx.needsLookup = true; // si riproverà nei prossimi giorni
+          if (outcome !== 'notfound') toast(lookupMessage(outcome, detail), 7000);
+        }
       } else formCtx.needsLookup = true;
     }
   } catch (err) {
@@ -751,7 +755,7 @@ async function handleIsbn(isbn) {
   const { book, outcome, detail } = await lookupIsbn(isbn);
   if (!book) {
     $('#toast').classList.remove('show');
-    openForm({ isbn }, { needsLookup: outcome !== 'notfound' });
+    openForm({ isbn }, { needsLookup: true });
     showLookupHint(outcome, detail);
     return;
   }
@@ -763,35 +767,74 @@ async function handleIsbn(isbn) {
 }
 
 // Completa i libri aggiunti offline
+// I libri salvati con il solo ISBN (appena usciti, aggiunti offline, o con Google in
+// difficoltà) vengono completati appena gli archivi li conoscono. Si riempiono solo i
+// campi vuoti, così quello che hai scritto tu non viene mai sovrascritto.
+const RETRY_EVERY = 20 * 3600 * 1000; // ricerca automatica al massimo una volta al giorno per libro
+const MAX_MISSES = 30;                // dopo circa un mese di tentativi a vuoto si smette
+let completing = false;
+
+async function completePending({ manual = false } = {}) {
+  if (completing) return { busy: true };
+  if (!navigator.onLine) return null;
+  const now = Date.now();
+  const pending = state.books.filter(b => b.needsLookup && b.isbn &&
+    (manual || !b.lastLookupAt || now - b.lastLookupAt > RETRY_EVERY));
+  if (!pending.length) return null;
+  completing = true;
+  let ok = 0, missing = 0, problem = null;
+  try {
+    for (const b of pending.slice(0, manual ? 100 : 10)) {
+      const { book: d, outcome } = await lookupIsbn(b.isbn);
+      b.lastLookupAt = Date.now();
+      if (d) {
+        for (const k of ['title', 'author', 'year', 'pages', 'publisher', 'genre']) if (!b[k] && d[k]) b[k] = d[k];
+        if (!b.cover) {
+          const blob = await fetchCover(d.coverUrls);
+          const small = blob && await normalizeCoverBlob(blob);
+          if (small) { b.cover = small; b.coverStamp = Date.now(); }
+        }
+        b.needsLookup = false;
+        b.lookupMisses = 0;
+        ok++;
+      } else if (outcome === 'notfound') {
+        b.lookupMisses = (b.lookupMisses || 0) + 1;
+        if (b.lookupMisses >= MAX_MISSES) b.needsLookup = false;
+        missing++;
+      } else {
+        problem = outcome; // archivio non disponibile: resta in attesa
+      }
+      await db.put(b);
+      if (['quota', 'badkey', 'blocked', 'offline'].includes(problem)) break; // inutile insistere
+    }
+  } finally {
+    completing = false;
+  }
+  await reload();
+  return { ok, missing, problem, total: pending.length };
+}
+
+// All'avvio e quando torna la connessione, in sottofondo e senza disturbare
+async function autoComplete(attempt = 0) {
+  if (!navigator.onLine) return;
+  if (openStack.length) { // stai usando l'app: riprovo tra poco
+    if (attempt < 6) setTimeout(() => autoComplete(attempt + 1), 20000);
+    return;
+  }
+  const r = await completePending();
+  if (r && r.ok) toast(`Ho completato i dati di ${r.ok} ${r.ok === 1 ? 'libro che aspettava' : 'libri che aspettavano'}`, 5000);
+}
+
 $('#btnComplete').addEventListener('click', async () => {
-  const pending = state.books.filter(b => b.needsLookup);
   $('#btnComplete').disabled = true;
   toast('Cerco i dati mancanti…', 20000);
-  let ok = 0, missing = 0, problem = null;
-  for (const b of pending) {
-    const { book: d, outcome } = await lookupIsbn(b.isbn);
-    if (d) {
-      for (const k of ['title', 'author', 'year', 'pages', 'publisher', 'genre']) if (!b[k] && d[k]) b[k] = d[k];
-      if (!b.cover) {
-        const blob = await fetchCover(d.coverUrls);
-        const small = blob && await normalizeCoverBlob(blob);
-        if (small) { b.cover = small; b.coverStamp = Date.now(); }
-      }
-      b.needsLookup = false;
-      ok++;
-    } else if (outcome === 'notfound') {
-      b.needsLookup = false; // non c'è da nessuna parte: inutile riprovare
-      missing++;
-    } else {
-      problem = outcome; // archivio non disponibile: resta in sospeso
-    }
-    await db.put(b);
-  }
+  const r = await completePending({ manual: true });
   $('#btnComplete').disabled = false;
-  await reload();
-  const parts = [`${ok} su ${pending.length} libri completati`];
-  if (missing) parts.push(`${missing} non presenti negli archivi: completali a mano`);
-  if (problem) parts.push({
+  if (!r) { toast('Non ci sono libri da completare'); return; }
+  if (r.busy) { toast('Sto già completando i dati, un attimo…'); return; }
+  const parts = [`${r.ok} su ${r.total} libri completati`];
+  if (r.missing) parts.push(`${r.missing} non ancora negli archivi: riproverò da sola nei prossimi giorni`);
+  if (r.problem) parts.push({
     quota: 'Google Books ha il limite esaurito: riprova più tardi',
     badkey: 'Google rifiuta la chiave: premi «Verifica gli archivi» nelle Impostazioni',
     blocked: 'Google non risponde in modo leggibile: premi «Verifica gli archivi» nelle Impostazioni',
@@ -799,8 +842,8 @@ $('#btnComplete').addEventListener('click', async () => {
     temporary: 'Google Books ha un guasto temporaneo, riprova più tardi',
     unreachable: 'Google Books non raggiungibile, riprova più tardi',
     offline: 'archivi non raggiungibili: controlla la connessione',
-  }[problem] || 'riprova più tardi');
-  toast(parts.join('. '), 6000);
+  }[r.problem] || 'riprova più tardi');
+  toast(parts.join('. '), 7000);
 });
 
 // ------------------------------------------------------------ esporta PDF
@@ -1088,7 +1131,7 @@ $('#q').addEventListener('input', e => { state.q = e.target.value; render(); });
 $('#shelf').addEventListener('click', e => {
   const el = e.target.closest('[data-id]'); if (el) openDetail(el.dataset.id);
 });
-window.addEventListener('online', renderPending);
+window.addEventListener('online', () => { renderPending(); setTimeout(autoComplete, 2000); });
 window.addEventListener('offline', renderPending);
 
 // ------------------------------------------------------------ avvio
@@ -1106,4 +1149,4 @@ if ('serviceWorker' in navigator) {
   });
   navigator.serviceWorker.register('sw.js').catch(err => console.warn('SW', err));
 }
-reload();
+reload().then(() => setTimeout(autoComplete, 4000));
