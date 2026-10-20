@@ -198,8 +198,14 @@ export function mapGenre(categories) {
 // distingue "libro non trovato" da "archivio che ha rifiutato la richiesta".
 
 const KEY_STORAGE = 'googleBooksKey';
-export function getGoogleKey() {
+// Chiave integrata nell'app (facoltativa). Se presente, la ricerca funziona su
+// ogni telefono senza configurare nulla. Va sempre limitata al sito e alla Books API.
+export const BUILTIN_GOOGLE_KEY = '';
+export function getStoredGoogleKey() {
   try { return localStorage.getItem(KEY_STORAGE) || ''; } catch (e) { return ''; }
+}
+export function getGoogleKey() {
+  return getStoredGoogleKey() || BUILTIN_GOOGLE_KEY;
 }
 export function setGoogleKey(k) {
   try { k && k.trim() ? localStorage.setItem(KEY_STORAGE, k.trim()) : localStorage.removeItem(KEY_STORAGE); } catch (e) { /* niente */ }

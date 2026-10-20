@@ -2,12 +2,13 @@ import { db, newId } from './db.js';
 import {
   GENRES, genreColor, hash, buildAuthorResolver, similarAuthor, cleanIsbn, isValidIsbn,
   extractFromText, lookupIsbn, searchByText, fetchCover, getGoogleKey, setGoogleKey, describeStatus,
+  getStoredGoogleKey, BUILTIN_GOOGLE_KEY,
 } from './catalog.js';
 import { barcodeSupported, scanIsbn } from './scanner.js';
 import { ocrReady, downloadOcr, removeOcr, recognize } from './ocr.js';
 import { buildPdf } from './pdf.js';
 
-const VERSION = '1.1.0';
+const VERSION = '1.2.0';
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -21,11 +22,20 @@ const state = {
 
 // ---------------------------------------------------------------- utilità
 const LOOKUP_MSG = {
-  quota: 'Google Books ha esaurito per oggi il limite di ricerche condiviso, e gli altri archivi non hanno questo libro. Salvalo pure anche senza titolo: completerai i dati con «Completa ora». Con una chiave personale gratuita (Impostazioni) il problema sparisce.',
+  quota: 'Google Books ha esaurito per oggi il limite di ricerche condiviso, e gli altri archivi non hanno questo libro. Salvalo pure anche senza titolo: completerai i dati con «Completa ora». Con una chiave personale gratuita il problema sparisce.',
   badkey: 'La chiave Google Books inserita nelle Impostazioni non è valida o non è autorizzata per questo sito: controllala.',
   unreachable: 'Gli archivi online non rispondono in questo momento. Salvalo pure anche senza titolo: completerai i dati più tardi con «Completa ora».',
   notfound: 'Questo ISBN non compare negli archivi online. Fotografa la copertina per leggere titolo e autore, oppure compila a mano.',
 };
+function showLookupHint(outcome) {
+  const h = $('#formHint');
+  h.textContent = LOOKUP_MSG[outcome];
+  if (outcome === 'notfound') return;
+  const keyBtn = (outcome === 'quota' || outcome === 'badkey')
+    ? '<button type="button" class="btn ghost small" data-act="key">Imposta la chiave</button>' : '';
+  h.insertAdjacentHTML('beforeend',
+    `<span class="hint-actions">${keyBtn}<button type="button" class="btn small" data-act="retry">Riprova la ricerca</button></span>`);
+}
 function titleOf(b) {
   return b.title || (b.isbn ? `ISBN ${b.isbn}` : 'Senza titolo');
 }
@@ -664,7 +674,8 @@ async function handleIsbn(isbn) {
   const { book, outcome } = await lookupIsbn(isbn);
   if (!book) {
     $('#toast').classList.remove('show');
-    openForm({ isbn }, { needsLookup: outcome !== 'notfound', hint: LOOKUP_MSG[outcome] });
+    openForm({ isbn }, { needsLookup: outcome !== 'notfound' });
+    showLookupHint(outcome);
     return;
   }
   let cover = null;
@@ -763,17 +774,40 @@ $('#dlgExport').addEventListener('click', async e => {
 });
 
 // ------------------------------------------------------------ impostazioni
-$('#btnSettings').addEventListener('click', async () => {
+$('#btnSettings').addEventListener('click', () => openSettings(false));
+
+async function openSettings(focusKey) {
   openSheet($('#dlgSettings'));
   $('#version').textContent = `Scaffale ${VERSION}`;
-  $('#gbKey').value = getGoogleKey();
+  $('#gbKey').value = getStoredGoogleKey();
+  $('#gbKey').placeholder = BUILTIN_GOOGLE_KEY ? "Usa la chiave integrata nell'app" : 'AIza…';
   $('#lookupStatus').innerHTML = '';
+  $('#keyHow').open = !!focusKey && !getGoogleKey();
+  if (focusKey) $('#keySection').scrollIntoView({ block: 'start' });
   refreshOcrStatus();
   if (navigator.storage && navigator.storage.estimate) {
     const est = await navigator.storage.estimate();
     const persisted = navigator.storage.persisted ? await navigator.storage.persisted() : false;
     $('#storageInfo').textContent = `Spazio usato: ${(est.usage / 1048576).toFixed(1)} MB. ` +
       (persisted ? 'Archivio protetto dalla pulizia automatica.' : 'Archivio non ancora protetto dalla pulizia automatica del browser.');
+  }
+}
+
+// Pulsanti nel messaggio del modulo
+$('#formHint').addEventListener('click', async e => {
+  const b = e.target.closest('[data-act]'); if (!b) return;
+  if (b.dataset.act === 'key') { openSettings(true); return; }
+  const isbn = cleanIsbn(form.elements.isbn.value);
+  if (!isValidIsbn(isbn)) { toast('Serve un ISBN valido nel campo ISBN'); return; }
+  b.disabled = true; b.innerHTML = '<span class="spinner"></span> Cerco…';
+  const { book, outcome } = await lookupIsbn(isbn);
+  if (book) {
+    fillForm(book, { overwrite: false });
+    formCtx.needsLookup = false;
+    $('#formHint').textContent = 'Dati trovati: controlla e salva.';
+    await maybeCover(book.coverUrls);
+  } else {
+    showLookupHint(outcome);
   }
 });
 
@@ -788,9 +822,10 @@ async function runLookupTest() {
   const lines = describeStatus(status);
   const cls = v => (v === 'ok' || v === 'empty') ? '' : v === 'quota' ? 'warn' : 'bad';
   let verdict;
-  if (status.google === 'ok') verdict = getGoogleKey() ? 'Tutto a posto: la tua chiave funziona.' : 'Tutto a posto per ora.';
+  const whose = getStoredGoogleKey() ? 'la tua chiave' : 'la chiave integrata';
+  if (status.google === 'ok') verdict = getGoogleKey() ? `Tutto a posto: ${whose} funziona.` : 'Tutto a posto per ora.';
   else if (status.google === 'quota') verdict = getGoogleKey()
-    ? 'Hai esaurito le ricerche di oggi con la tua chiave: si azzerano ogni giorno.'
+    ? `Hai esaurito le ricerche di oggi con ${whose}: si azzerano ogni giorno.`
     : 'Google Books rifiuta le ricerche senza chiave: è il limite condiviso. Aggiungi una chiave personale qui sopra.';
   else if (status.google === 'badkey') verdict = 'Google rifiuta la chiave: controlla di averla copiata intera, che la Books API sia abilitata e che la restrizione del sito sia https://ronny421.github.io/*';
   else verdict = 'Google Books non risponde: controlla la connessione e riprova.';
@@ -799,6 +834,17 @@ async function runLookupTest() {
 }
 
 $('#btnLookupTest').addEventListener('click', runLookupTest);
+$('#btnKeyPaste').addEventListener('click', async () => {
+  try {
+    const text = (await navigator.clipboard.readText()).trim();
+    const m = text.match(/AIza[0-9A-Za-z_\-]{35}/);
+    if (m) { $('#gbKey').value = m[0]; toast('Chiave incollata: ora premi «Salva e verifica»'); }
+    else toast("Negli appunti non c'è una chiave Google: deve iniziare con AIza");
+  } catch (err) {
+    $('#gbKey').focus();
+    toast('Tieni premuto nel campo e scegli «Incolla»');
+  }
+});
 $('#btnKeySave').addEventListener('click', async () => {
   const k = $('#gbKey').value.trim();
   if (k && !/^[A-Za-z0-9_\-]{30,60}$/.test(k)) { toast('La chiave sembra incompleta: copiala di nuovo'); return; }
@@ -849,7 +895,8 @@ async function dataUrlToBlob(u) { return (await fetch(u)).blob(); }
 
 $('#btnBackup').addEventListener('click', async () => {
   const books = await Promise.all(state.books.map(async b => ({ ...b, cover: b.cover ? await blobToDataUrl(b.cover) : null })));
-  const json = JSON.stringify({ app: 'scaffale', version: 1, exportedAt: new Date().toISOString(), books });
+  const settings = getStoredGoogleKey() ? { googleBooksKey: getStoredGoogleKey() } : {};
+  const json = JSON.stringify({ app: 'scaffale', version: 1, exportedAt: new Date().toISOString(), settings, books });
   const name = `scaffale-backup-${new Date().toISOString().slice(0, 10)}.json`;
   const file = new File([json], name, { type: 'application/json' });
   if (navigator.canShare && navigator.canShare({ files: [file] })) {
@@ -869,8 +916,10 @@ $('#restoreInput').addEventListener('change', async e => {
     const books = await Promise.all(data.books.map(async b => ({ ...b, cover: b.cover ? await dataUrlToBlob(b.cover) : null })));
     if (!confirm(`Ripristinare ${books.length} libri? Quelli già presenti con lo stesso identificativo verranno sovrascritti.`)) return;
     await db.putMany(books);
+    const restoredKey = data.settings && data.settings.googleBooksKey && !getStoredGoogleKey();
+    if (restoredKey) setGoogleKey(data.settings.googleBooksKey);
     await reload();
-    toast(`${books.length} libri ripristinati`);
+    toast(`${books.length} libri ripristinati${restoredKey ? ', insieme alla chiave di ricerca' : ''}`);
   } catch (err) { toast('File non valido: scegli una copia creata da Scaffale'); }
 });
 

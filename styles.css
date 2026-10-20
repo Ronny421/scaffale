@@ -351,3 +351,9 @@ input[type="range"] { width: 100%; margin: 14px 0 4px; accent-color: var(--accen
 .how ol { margin: 10px 0 2px; padding-left: 20px; font-size: 14.5px; display: grid; gap: 6px; }
 .how a { color: var(--accent); font-weight: 650; }
 .how code { font-size: 13px; background: var(--surface); padding: 1px 5px; border-radius: 5px; border: 1px solid var(--line); word-break: break-all; }
+
+.key-row { display: flex; gap: 8px; }
+.key-row input { flex: 1; min-width: 0; }
+.key-row .btn { height: 48px; }
+.how > .hint { margin-top: 8px; }
+.hint-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }

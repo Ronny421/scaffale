@@ -184,25 +184,30 @@
   <dialog class="sheet tall" id="dlgSettings">
     <div class="grab"></div>
     <h2>Impostazioni</h2>
-    <section class="set">
+    <section class="set" id="keySection">
       <h3>Ricerca dei dati online</h3>
-      <p class="hint">Titolo, autore e genere arrivano da Google Books e da Open Library. Senza chiave, Google Books usa un limite giornaliero condiviso fra tutti, spesso esaurito. Con una chiave personale gratuita hai 1.000 ricerche al giorno solo per te.</p>
-      <label class="field key-field"><span>Chiave API di Google Books (facoltativa)</span>
-        <input id="gbKey" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="AIza…"></label>
+      <p class="hint">Titolo, autore e genere arrivano da Google Books e da Open Library. Senza chiave, Google Books usa un limite giornaliero condiviso fra tutti, quasi sempre esaurito. Con una chiave personale gratuita hai 1.000 ricerche al giorno solo per te: la crei una volta sola, in circa 5 minuti.</p>
+      <div class="field key-field">
+        <span>Chiave API di Google Books</span>
+        <div class="key-row">
+          <input id="gbKey" aria-label="Chiave API di Google Books" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="AIza…">
+          <button type="button" class="btn ghost small" id="btnKeyPaste">Incolla</button>
+        </div>
+      </div>
       <div class="row-btns">
         <button class="btn small" id="btnKeySave">Salva e verifica</button>
         <button class="btn ghost small" id="btnLookupTest">Verifica gli archivi</button>
       </div>
       <div class="lookup-status" id="lookupStatus" aria-live="polite"></div>
-      <details class="how">
-        <summary>Come ottenere la chiave (gratis, circa 5 minuti)</summary>
+      <details class="how" id="keyHow">
+        <summary>Come creare la chiave</summary>
+        <p class="hint">È più comodo dal computer: poi mandati la chiave sul telefono, per esempio con una nota o un messaggio a te stesso.</p>
         <ol>
-          <li>Apri <a href="https://console.cloud.google.com/" target="_blank" rel="noopener">console.cloud.google.com</a> e accedi con il tuo account Google.</li>
-          <li>Crea un progetto: menu dei progetti in alto, poi «Nuovo progetto». Il nome è libero, per esempio Scaffale.</li>
-          <li>Nella barra di ricerca in alto scrivi «Books API», aprila e premi «Abilita».</li>
-          <li>Vai in «API e servizi», poi «Credenziali», «Crea credenziali», «Chiave API». Copia la chiave che compare.</li>
-          <li>Consigliato: modifica la chiave. In «Restrizioni dell'applicazione» scegli «Siti web» e aggiungi <code>https://ronny421.github.io/*</code>. In «Restrizioni API» lascia solo «Books API».</li>
-          <li>Incolla la chiave qui sopra e premi «Salva e verifica».</li>
+          <li>Apri <a href="https://console.cloud.google.com/projectcreate" target="_blank" rel="noopener">Nuovo progetto</a> e accedi con il tuo account Google. Scrivi un nome, per esempio Scaffale, e premi «Crea». Al primo accesso Google ti chiede di accettare i suoi termini di servizio.</li>
+          <li>Apri <a href="https://console.cloud.google.com/apis/library/books.googleapis.com" target="_blank" rel="noopener">Books API</a>, controlla in alto che sia selezionato il progetto appena creato e premi «Abilita».</li>
+          <li>Apri <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener">Credenziali</a>, poi «Crea credenziali» e «Chiave API». Copia la chiave: inizia con AIza.</li>
+          <li>Consigliato: nella stessa pagina apri la chiave. In «Restrizioni dell'applicazione» scegli «Siti web» e aggiungi <code>https://ronny421.github.io/*</code>. In «Restrizioni API» scegli «Limita chiave» e seleziona solo «Books API». Salva.</li>
+          <li>Torna qui, premi «Incolla» e poi «Salva e verifica».</li>
         </ol>
       </details>
     </section>
