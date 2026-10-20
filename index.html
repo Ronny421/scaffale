@@ -26,6 +26,7 @@
     <symbol id="i-camera" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M4 8h3l2-3h6l2 3h3a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1z"/><circle cx="12" cy="13.5" r="3.5"/></g></symbol>
     <symbol id="i-pen" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="m13.5 6.5 4 4"/></g></symbol>
     <symbol id="i-close" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></symbol>
+    <symbol id="i-file" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h4"/></g></symbol>
     <symbol id="i-ribbon" viewBox="0 0 24 24"><path d="M7 3h10v18l-5-4-5 4z" fill="currentColor"/></symbol>
   </svg>
 
@@ -167,6 +168,7 @@
   <dialog class="sheet tall" id="dlgBook">
     <div class="grab"></div>
     <div class="detail" id="detail"></div>
+    <input type="file" id="bookFileInput" accept=".pdf,.epub,application/pdf,application/epub+zip" hidden>
   </dialog>
 
   <!-- Esporta PDF -->
@@ -243,7 +245,7 @@
     </section>
     <section class="set">
       <h3>Copia di sicurezza</h3>
-      <p class="hint">I libri sono salvati solo su questo telefono. Ogni tanto fai una copia: ti serve se cambi telefono o cancelli i dati del browser.</p>
+      <p class="hint">I libri sono salvati solo su questo telefono. Ogni tanto fai una copia: ti serve se cambi telefono o cancelli i dati del browser. La copia non include i file PDF ed EPUB allegati, che possono essere molto grandi: conservane gli originali.</p>
       <div class="row-btns">
         <button class="btn small" id="btnBackup">Salva copia</button>
         <button class="btn ghost small" id="btnRestore">Ripristina copia</button>

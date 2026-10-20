@@ -8,7 +8,7 @@ import { barcodeSupported, scanIsbn } from './scanner.js';
 import { ocrReady, downloadOcr, removeOcr, recognize } from './ocr.js';
 import { buildPdf } from './pdf.js';
 
-const VERSION = '1.6.0';
+const VERSION = '1.7.0';
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -33,6 +33,9 @@ window.addEventListener('appinstalled', () => {
   installEvent = null;
   $('#installBar').hidden = true;
 });
+
+// Un'altra finestra con la versione vecchia blocca l'aggiornamento del database
+window.addEventListener('db-blocked', () => toast('Aggiornamento in corso: chiudi le altre finestre di Scaffale aperte', 8000));
 
 // ---------------------------------------------------------------- utilità
 const LOOKUP_MSG = {
@@ -242,7 +245,7 @@ function rowHtml(b) {
   return `<button class="row" data-id="${b.id}">
     ${url ? `<img class="thumb" src="${url}" alt="" style="--c:${c}">` : `<span class="thumb" style="--c:${c}">${esc(initials(b.title))}</span>`}
     <span><span class="t">${esc(titleOf(b))}</span><span class="a">${esc(b.author || 'Autore sconosciuto')}</span>
-    <span class="meta">${esc([b.year, b.genre].filter(Boolean).join(', '))}</span></span>
+    <span class="meta">${esc([b.year, b.genre, b.file && fileKind(b.file)].filter(Boolean).join(', '))}</span></span>
     ${pct}
   </button>`;
 }
@@ -340,11 +343,94 @@ function renderDetail(b) {
         ${b.bookmarkAt ? `<span class="hint" style="align-self:center">Aggiornato il ${new Date(b.bookmarkAt).toLocaleDateString('it-IT')}</span>` : ''}
       </div>
     </div>
+    ${digitalHtml(b)}
     <div class="detail-actions">
       <button class="btn ghost" id="dEdit"><svg><use href="#i-pen"/></svg>Modifica</button>
       <button class="btn danger" id="dDelete">Elimina</button>
     </div>`;
 }
+
+// ------------------------------------------------------------ copia digitale
+// Il PDF o l'EPUB di un libro, salvato nel database dell'app: resta solo sul telefono
+function fileKind(f) {
+  const n = (f.name || '').toLowerCase();
+  if (f.type === 'application/epub+zip' || n.endsWith('.epub')) return 'EPUB';
+  if (f.type === 'application/pdf' || n.endsWith('.pdf')) return 'PDF';
+  return 'File';
+}
+function formatSize(bytes) {
+  if (bytes >= 1048576) return (bytes / 1048576).toLocaleString('it-IT', { maximumFractionDigits: 1 }) + ' MB';
+  return Math.max(1, Math.round(bytes / 1024)) + ' KB';
+}
+function digitalHtml(b) {
+  if (!b.file) {
+    return `<div class="digital">
+      <div class="bookmark-head"><svg><use href="#i-file"/></svg><strong>Copia digitale</strong></div>
+      <p class="hint">Allega il PDF o l'EPUB di questo libro: resta salvato solo su questo telefono e si apre anche senza internet.</p>
+      <div class="bm-actions"><button class="btn ghost small" id="fAdd">Allega file</button></div>
+    </div>`;
+  }
+  return `<div class="digital">
+      <div class="bookmark-head"><svg><use href="#i-file"/></svg><strong>Copia digitale</strong><span class="badge">${fileKind(b.file)}</span></div>
+      <p class="file-name">${esc(b.file.name)}<small>${formatSize(b.file.size)}, salvato solo su questo telefono</small></p>
+      <div class="bm-actions">
+        <button class="btn small" id="fOpen">Apri con…</button>
+        <button class="btn ghost small" id="fSave">Salva nei Download</button>
+        <button class="btn danger small" id="fRemove">Rimuovi</button>
+      </div>
+    </div>`;
+}
+
+async function openBookFile(b, how) {
+  const rec = await db.files.get(b.id);
+  if (!rec) {
+    delete b.file; await db.put(b); renderDetail(b);
+    toast('Il file non è su questo telefono: allegalo di nuovo');
+    return;
+  }
+  const file = new File([rec.blob], rec.name, { type: rec.type });
+  // "Apri con…": il menu di condivisione di Android propone le app di lettura installate
+  if (how === 'share' && navigator.canShare && navigator.canShare({ files: [file] })) {
+    try { await navigator.share({ files: [file], title: titleOf(b) }); return; }
+    catch (err) { if (err.name === 'AbortError') return; }
+  }
+  // Se la condivisione non è possibile (per esempio con gli EPUB) salvo una copia nei Download
+  const url = URL.createObjectURL(file);
+  const a = document.createElement('a');
+  a.href = url; a.download = rec.name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
+  toast(how === 'share' ? 'Salvato nei Download: aprilo con la tua app di lettura' : 'Copia salvata nei Download');
+}
+
+$('#bookFileInput').addEventListener('change', async e => {
+  const f = e.target.files[0]; e.target.value = '';
+  const b = state.books.find(x => x.id === currentId);
+  if (!f || !b) return;
+  const n = f.name.toLowerCase();
+  const type = /epub/.test(f.type) || n.endsWith('.epub') ? 'application/epub+zip'
+    : /pdf/.test(f.type) || n.endsWith('.pdf') ? 'application/pdf' : '';
+  if (!type) { toast('Scegli un file PDF o EPUB'); return; }
+  // Il browser concede a ogni sito una parte del disco del telefono: controllo che basti
+  if (navigator.storage && navigator.storage.estimate) {
+    const { usage = 0, quota = 0 } = await navigator.storage.estimate();
+    if (quota && quota - usage < f.size * 1.1) { toast('Spazio insufficiente sul telefono per questo file'); return; }
+  }
+  toast('Salvo il file…', 15000);
+  try {
+    // Copio i byte in un nuovo Blob: così il file resta nell'app anche se cancelli l'originale
+    const blob = new Blob([await f.arrayBuffer()], { type });
+    await db.files.put({ bookId: b.id, name: f.name, type, size: f.size, blob, addedAt: Date.now() });
+  } catch (err) {
+    toast('Non sono riuscito a salvare il file: ' + (err.message || err.name));
+    return;
+  }
+  b.file = { name: f.name, type, size: f.size };
+  await db.put(b);
+  requestPersistence();
+  renderDetail(b);
+  toast('File salvato solo su questo telefono');
+});
 
 function setPage(v) {
   const b = state.books.find(x => x.id === currentId);
@@ -382,13 +468,25 @@ $('#dlgBook').addEventListener('click', async e => {
     state.q = by.dataset.author; $('#q').value = state.q;
     closeSheet($('#dlgBook')); render(); return;
   }
+  if (e.target.closest('#fAdd')) { $('#bookFileInput').click(); return; }
+  if (e.target.closest('#fOpen')) { openBookFile(b, 'share'); return; }
+  if (e.target.closest('#fSave')) { openBookFile(b, 'download'); return; }
+  if (e.target.closest('#fRemove')) {
+    if (!confirm(`Rimuovere il file «${b.file.name}» da Scaffale? Il libro resta nello scaffale.`)) return;
+    await db.files.remove(b.id);
+    delete b.file;
+    await db.put(b);
+    renderDetail(b);
+    toast('File rimosso');
+    return;
+  }
   if (e.target.closest('#dEdit')) {
     closeSheet($('#dlgBook'));
     openForm({ ...b }, { existing: b });
     return;
   }
   if (e.target.closest('#dDelete')) {
-    if (!confirm(`Eliminare «${titleOf(b)}» dallo scaffale?`)) return;
+    if (!confirm(`Eliminare «${titleOf(b)}» dallo scaffale?${b.file ? ' Verrà eliminata anche la sua copia digitale.' : ''}`)) return;
     await db.remove(b.id);
     closeSheet($('#dlgBook'));
     await reload();
@@ -1039,7 +1137,7 @@ function blobToDataUrl(blob) {
 async function dataUrlToBlob(u) { return (await fetch(u)).blob(); }
 
 $('#btnBackup').addEventListener('click', async () => {
-  const books = await Promise.all(state.books.map(async b => ({ ...b, cover: b.cover ? await blobToDataUrl(b.cover) : null })));
+  const books = await Promise.all(state.books.map(async b => ({ ...b, file: undefined, cover: b.cover ? await blobToDataUrl(b.cover) : null })));
   const settings = getStoredGoogleKey() ? { googleBooksKey: getStoredGoogleKey() } : {};
   const json = JSON.stringify({ app: 'scaffale', version: 1, exportedAt: new Date().toISOString(), settings, books });
   const name = `scaffale-backup-${new Date().toISOString().slice(0, 10)}.json`;
@@ -1059,6 +1157,11 @@ $('#restoreInput').addEventListener('change', async e => {
     const data = JSON.parse(await f.text());
     if (data.app !== 'scaffale' || !Array.isArray(data.books)) throw new Error();
     const books = await Promise.all(data.books.map(async b => ({ ...b, cover: b.cover ? await dataUrlToBlob(b.cover) : null })));
+    // La copia non contiene i file: se sono ancora su questo telefono, li ricollego ai libri
+    for (const b of books) {
+      const rec = await db.files.get(b.id);
+      if (rec) b.file = { name: rec.name, type: rec.type, size: rec.size };
+    }
     if (!confirm(`Ripristinare ${books.length} libri? Quelli già presenti con lo stesso identificativo verranno sovrascritti.`)) return;
     await db.putMany(books);
     const restoredKey = data.settings && data.settings.googleBooksKey && !getStoredGoogleKey();

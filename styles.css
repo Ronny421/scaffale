@@ -364,3 +364,10 @@ input[type="range"] { width: 100%; margin: 14px 0 4px; accent-color: var(--accen
 
 .banner.install { background: var(--accent); color: var(--accent-ink); }
 .banner.install .btn { background: var(--accent-ink); color: var(--accent); flex: none; }
+
+/* Copia digitale */
+.digital { margin-top: 14px; padding: 16px; border-radius: 20px; background: var(--surface-2); border: 1px solid var(--line); }
+.digital .bookmark-head svg { color: var(--accent); }
+.digital .badge { font-size: 12px; font-weight: 800; padding: 3px 8px; border-radius: 6px; background: var(--accent); color: var(--accent-ink); }
+.file-name { margin: 0; font-weight: 650; overflow-wrap: anywhere; }
+.file-name small { display: block; font-weight: 400; color: var(--muted); font-size: 13.5px; margin-top: 2px; }

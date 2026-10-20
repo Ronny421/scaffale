@@ -65,6 +65,14 @@ Scaffale riprova da sola una volta al giorno, all'apertura, e riempie i campi
 vuoti appena il libro compare (senza toccare quelli scritti da te). Per avere
 subito titolo e autore, nel modulo tocca «Copertina» e fotografala.
 
+## Copia digitale di un libro (PDF o EPUB)
+
+Nella scheda di ogni libro, sezione «Copia digitale», puoi allegare il PDF o l'EPUB.
+Il file viene copiato nel database interno dell'app e resta solo sul telefono:
+non viene mai caricato online, nemmeno su GitHub. «Apri con…» lo passa alla tua app
+di lettura; «Salva nei Download» ne salva una copia. La copia di sicurezza non
+include i file, che possono essere molto grandi: conserva gli originali.
+
 ## Farla installare a un'altra persona
 
 In Impostazioni → «Invita qualcuno» l'app crea un link da mandare (per esempio su
