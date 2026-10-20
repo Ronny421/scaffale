@@ -1,7 +1,7 @@
 // Service worker: è il "motore" che fa funzionare l'app senza internet.
 // Al primo avvio salva tutti i file dell'app in una cache; poi li serve da lì.
 
-const VERSION = 'scaffale-v1.0.0';
+const VERSION = 'scaffale-v1.1.0';
 const OCR_CACHE = 'scaffale-ocr-v1';
 const FONT_CACHE = 'scaffale-fonts-v1';
 
@@ -23,7 +23,7 @@ const SHELL = [
 ];
 
 self.addEventListener('install', event => {
-  event.waitUntil(caches.open(VERSION).then(c => c.addAll(SHELL)).then(() => self.skipWaiting()));
+  event.waitUntil(caches.open(VERSION).then(c => c.addAll(SHELL.map(u => new Request(u, { cache: 'reload' })))).then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', event => {

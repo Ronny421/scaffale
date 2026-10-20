@@ -1,13 +1,13 @@
 import { db, newId } from './db.js';
 import {
   GENRES, genreColor, hash, buildAuthorResolver, similarAuthor, cleanIsbn, isValidIsbn,
-  extractFromText, lookupIsbn, searchByText, fetchCover,
+  extractFromText, lookupIsbn, searchByText, fetchCover, getGoogleKey, setGoogleKey, describeStatus,
 } from './catalog.js';
 import { barcodeSupported, scanIsbn } from './scanner.js';
 import { ocrReady, downloadOcr, removeOcr, recognize } from './ocr.js';
 import { buildPdf } from './pdf.js';
 
-const VERSION = '1.0.0';
+const VERSION = '1.1.0';
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -20,6 +20,15 @@ const state = {
 };
 
 // ---------------------------------------------------------------- utilità
+const LOOKUP_MSG = {
+  quota: 'Google Books ha esaurito per oggi il limite di ricerche condiviso, e gli altri archivi non hanno questo libro. Salvalo pure anche senza titolo: completerai i dati con «Completa ora». Con una chiave personale gratuita (Impostazioni) il problema sparisce.',
+  badkey: 'La chiave Google Books inserita nelle Impostazioni non è valida o non è autorizzata per questo sito: controllala.',
+  unreachable: 'Gli archivi online non rispondono in questo momento. Salvalo pure anche senza titolo: completerai i dati più tardi con «Completa ora».',
+  notfound: 'Questo ISBN non compare negli archivi online. Fotografa la copertina per leggere titolo e autore, oppure compila a mano.',
+};
+function titleOf(b) {
+  return b.title || (b.isbn ? `ISBN ${b.isbn}` : 'Senza titolo');
+}
 function status(b) {
   if (b.finished || (b.pages && b.currentPage >= b.pages)) return 'done';
   if (b.currentPage > 0) return 'reading';
@@ -185,9 +194,9 @@ function spineHtml(b) {
   const width = b.pages ? Math.round(24 + Math.min(b.pages, 900) / 900 * 30) : 28 + (h % 10);
   const s = status(b);
   const p = progress(b);
-  return `<div class="slot"><button class="spine ${s}" data-id="${b.id}" style="--c:${c};--t:${readableOn(c)};--h:${height}px;--w:${width}px${p !== null ? `;--p:${p}` : ';--p:.35'}" aria-label="${esc(b.title)}${b.author ? ', ' + esc(b.author) : ''}">
+  return `<div class="slot"><button class="spine ${s}" data-id="${b.id}" style="--c:${c};--t:${readableOn(c)};--h:${height}px;--w:${width}px${p !== null ? `;--p:${p}` : ';--p:.35'}" aria-label="${esc(titleOf(b))}${b.author ? ', ' + esc(b.author) : ''}">
     ${s === 'reading' ? '<span class="ribbon"></span>' : ''}${s === 'done' ? '<span class="check"></span>' : ''}
-    <span class="st">${esc(b.title || 'Senza titolo')}</span>
+    <span class="st">${esc(titleOf(b))}</span>
     <span class="sa">${esc(surname(authorOf(b.author)))}</span>
   </button></div>`;
 }
@@ -201,7 +210,7 @@ function rowHtml(b) {
     : '<span class="pct"></span>';
   return `<button class="row" data-id="${b.id}">
     ${url ? `<img class="thumb" src="${url}" alt="" style="--c:${c}">` : `<span class="thumb" style="--c:${c}">${esc(initials(b.title))}</span>`}
-    <span><span class="t">${esc(b.title || 'Senza titolo')}</span><span class="a">${esc(b.author || 'Autore sconosciuto')}</span>
+    <span><span class="t">${esc(titleOf(b))}</span><span class="a">${esc(b.author || 'Autore sconosciuto')}</span>
     <span class="meta">${esc([b.year, b.genre].filter(Boolean).join(', '))}</span></span>
     ${pct}
   </button>`;
@@ -280,7 +289,7 @@ function renderDetail(b) {
     <div class="detail-top">
       ${url ? `<img class="detail-cover" src="${url}" alt="Copertina">` : `<div class="detail-cover" style="--c:${c}">${esc(initials(b.title))}</div>`}
       <div>
-        <h2>${esc(b.title || 'Senza titolo')}</h2>
+        <h2>${esc(titleOf(b))}</h2>
         ${b.author ? `<button class="by" data-author="${esc(b.author)}">${esc(b.author)}</button>` : '<span class="hint">Autore sconosciuto</span>'}
         <div class="facts">${facts}</div>
       </div>
@@ -348,7 +357,7 @@ $('#dlgBook').addEventListener('click', async e => {
     return;
   }
   if (e.target.closest('#dDelete')) {
-    if (!confirm(`Eliminare «${b.title}» dallo scaffale?`)) return;
+    if (!confirm(`Eliminare «${titleOf(b)}» dallo scaffale?`)) return;
     await db.remove(b.id);
     closeSheet($('#dlgBook'));
     await reload();
@@ -459,8 +468,8 @@ form.addEventListener('submit', async e => {
   e.preventDefault();
   const f = form.elements;
   const title = f.title.value.trim();
-  if (!title) { f.title.focus(); toast('Scrivi almeno il titolo'); return; }
   const isbn = cleanIsbn(f.isbn.value);
+  if (!title && !(formCtx.needsLookup && isbn)) { f.title.focus(); toast('Scrivi almeno il titolo'); return; }
   const dup = isbn && state.books.find(b => b.isbn === isbn && (!formCtx.existing || b.id !== formCtx.existing.id));
   if (dup && !confirm(`Hai già «${dup.title}» con lo stesso ISBN. Salvare comunque una seconda copia?`)) return;
 
@@ -544,8 +553,9 @@ async function runOcr(file) {
       form.elements.isbn.value = found.isbn;
       toast(`Trovato l'ISBN ${found.isbn}`);
       if (navigator.onLine) {
-        const data = await lookupIsbn(found.isbn);
-        if (data) { fillForm(data, { overwrite: false }); await maybeCover(data.coverUrl); }
+        const { book, outcome } = await lookupIsbn(found.isbn);
+        if (book) { fillForm(book, { overwrite: false }); await maybeCover(book.coverUrls); }
+        else if (outcome !== 'notfound') { formCtx.needsLookup = true; toast(LOOKUP_MSG[outcome], 7000); }
       } else formCtx.needsLookup = true;
     }
   } catch (err) {
@@ -553,9 +563,10 @@ async function runOcr(file) {
   }
 }
 
-async function maybeCover(url) {
-  if (formCtx.cover || !url) return;
-  const blob = await fetchCover(url);
+async function maybeCover(urls) {
+  const list = [].concat(urls || []).filter(Boolean);
+  if (formCtx.cover || !list.length) return;
+  const blob = await fetchCover(list);
   if (blob) {
     const small = await normalizeCoverBlob(blob);
     if (small) { formCtx.cover = small; formCtx.coverChanged = true; setCoverPreview(small); }
@@ -577,8 +588,11 @@ $('#btnSearchOnline').addEventListener('click', async () => {
   if (!t && !a) { toast('Scegli prima almeno il titolo'); return; }
   const box = $('#candidates');
   box.innerHTML = '<p class="hint"><span class="spinner"></span> Cerco…</p>';
-  const res = await searchByText(t, a);
-  if (!res.length) { box.innerHTML = '<p class="hint">Nessun risultato. Prova a correggere il titolo.</p>'; return; }
+  const { results: res, outcome } = await searchByText(t, a);
+  if (!res.length) {
+    box.innerHTML = `<p class="hint">${outcome === 'notfound' ? 'Nessun risultato. Prova a correggere il titolo.' : esc(LOOKUP_MSG[outcome])}</p>`;
+    return;
+  }
   box._res = res;
   box.innerHTML = res.map((r, i) => `<button type="button" class="cand" data-i="${i}">
     ${r.coverUrl ? `<img src="${esc(r.coverUrl)}" alt="" loading="lazy">` : '<span class="ph"></span>'}
@@ -590,8 +604,7 @@ $('#candidates').addEventListener('click', async e => {
   fillForm(r);
   $('#candidates').innerHTML = '';
   toast('Dati inseriti: controlla e salva');
-  if (r.isbn) await maybeCover(`https://covers.openlibrary.org/b/isbn/${r.isbn}-L.jpg?default=false`);
-  await maybeCover(r.coverUrl);
+  await maybeCover([r.isbn && `https://covers.openlibrary.org/b/isbn/${r.isbn}-L.jpg?default=false`, r.coverUrl]);
 });
 
 // ------------------------------------------------------------ aggiunta
@@ -644,45 +657,58 @@ async function handleIsbn(isbn) {
   const dup = state.books.find(b => b.isbn === isbn);
   if (dup) { toast('Questo libro è già nel tuo scaffale'); openDetail(dup.id); return; }
   if (!navigator.onLine) {
-    openForm({ isbn }, { needsLookup: true, hint: 'Sei offline: salva pure con il solo titolo. Il resto si completa quando torni online.' });
+    openForm({ isbn }, { needsLookup: true, hint: 'Sei offline: salvalo pure anche senza titolo. I dati si completano quando torni online, con «Completa ora».' });
     return;
   }
-  toast('Cerco il libro…', 8000);
-  const data = await lookupIsbn(isbn);
-  if (!data) {
-    toast('Non ho trovato dati: compila a mano');
-    openForm({ isbn }, { hint: 'ISBN non presente negli archivi online. Puoi fotografare la copertina per leggere il titolo.' });
+  toast('Cerco il libro…', 15000);
+  const { book, outcome } = await lookupIsbn(isbn);
+  if (!book) {
+    $('#toast').classList.remove('show');
+    openForm({ isbn }, { needsLookup: outcome !== 'notfound', hint: LOOKUP_MSG[outcome] });
     return;
   }
   let cover = null;
-  const blob = await fetchCover(data.coverUrl);
+  const blob = await fetchCover(book.coverUrls);
   if (blob) cover = await normalizeCoverBlob(blob);
   $('#toast').classList.remove('show');
-  openForm(data, { cover, hint: 'Controlla i dati e salva.' });
+  openForm(book, { cover, hint: 'Controlla i dati e salva.' });
 }
 
 // Completa i libri aggiunti offline
 $('#btnComplete').addEventListener('click', async () => {
   const pending = state.books.filter(b => b.needsLookup);
   $('#btnComplete').disabled = true;
-  let ok = 0;
+  toast('Cerco i dati mancanti…', 20000);
+  let ok = 0, missing = 0, problem = null;
   for (const b of pending) {
-    const d = await lookupIsbn(b.isbn);
+    const { book: d, outcome } = await lookupIsbn(b.isbn);
     if (d) {
       for (const k of ['title', 'author', 'year', 'pages', 'publisher', 'genre']) if (!b[k] && d[k]) b[k] = d[k];
       if (!b.cover) {
-        const blob = await fetchCover(d.coverUrl);
+        const blob = await fetchCover(d.coverUrls);
         const small = blob && await normalizeCoverBlob(blob);
         if (small) { b.cover = small; b.coverStamp = Date.now(); }
       }
+      b.needsLookup = false;
       ok++;
+    } else if (outcome === 'notfound') {
+      b.needsLookup = false; // non c'è da nessuna parte: inutile riprovare
+      missing++;
+    } else {
+      problem = outcome; // archivio non disponibile: resta in sospeso
     }
-    b.needsLookup = false;
     await db.put(b);
   }
   $('#btnComplete').disabled = false;
   await reload();
-  toast(`${ok} su ${pending.length} libri completati`);
+  const parts = [`${ok} su ${pending.length} libri completati`];
+  if (missing) parts.push(`${missing} non presenti negli archivi: completali a mano`);
+  if (problem) parts.push({
+    quota: 'Google Books ha il limite esaurito: riprova più tardi o aggiungi una chiave',
+    badkey: 'controlla la chiave Google Books nelle Impostazioni',
+    unreachable: 'archivi non raggiungibili, riprova più tardi',
+  }[problem]);
+  toast(parts.join('. '), 6000);
 });
 
 // ------------------------------------------------------------ esporta PDF
@@ -712,7 +738,7 @@ $('#dlgExport').addEventListener('click', async e => {
   const by = $('#expGroup [aria-checked="true"]').dataset.g;
   const labels = { genre: 'genere', author: 'autore', year: 'anno', status: 'stato di lettura' };
   const books = ($('#expFiltered').checked ? filtered() : state.books)
-    .map(b => ({ ...b, currentPage: status(b) === 'done' ? (b.pages || 1) : (b.currentPage || 0), pages: status(b) === 'done' && !b.pages ? 1 : b.pages }));
+    .map(b => ({ ...b, title: titleOf(b), currentPage: status(b) === 'done' ? (b.pages || 1) : (b.currentPage || 0), pages: status(b) === 'done' && !b.pages ? 1 : b.pages }));
   try {
     const groups = groupBooks(books, by);
     const blob = await buildPdf(groups, {
@@ -740,6 +766,8 @@ $('#dlgExport').addEventListener('click', async e => {
 $('#btnSettings').addEventListener('click', async () => {
   openSheet($('#dlgSettings'));
   $('#version').textContent = `Scaffale ${VERSION}`;
+  $('#gbKey').value = getGoogleKey();
+  $('#lookupStatus').innerHTML = '';
   refreshOcrStatus();
   if (navigator.storage && navigator.storage.estimate) {
     const est = await navigator.storage.estimate();
@@ -747,6 +775,36 @@ $('#btnSettings').addEventListener('click', async () => {
     $('#storageInfo').textContent = `Spazio usato: ${(est.usage / 1048576).toFixed(1)} MB. ` +
       (persisted ? 'Archivio protetto dalla pulizia automatica.' : 'Archivio non ancora protetto dalla pulizia automatica del browser.');
   }
+});
+
+// --- Ricerca dati online: chiave Google e verifica degli archivi
+const TEST_ISBN = '9780262033848'; // un libro presente in tutti gli archivi
+
+async function runLookupTest() {
+  const box = $('#lookupStatus');
+  if (!navigator.onLine) { box.innerHTML = '<p class="verdict">Sei offline: collegati a internet per verificare.</p>'; return; }
+  box.innerHTML = '<p class="verdict"><span class="spinner"></span> Interrogo gli archivi…</p>';
+  const { status } = await lookupIsbn(TEST_ISBN);
+  const lines = describeStatus(status);
+  const cls = v => (v === 'ok' || v === 'empty') ? '' : v === 'quota' ? 'warn' : 'bad';
+  let verdict;
+  if (status.google === 'ok') verdict = getGoogleKey() ? 'Tutto a posto: la tua chiave funziona.' : 'Tutto a posto per ora.';
+  else if (status.google === 'quota') verdict = getGoogleKey()
+    ? 'Hai esaurito le ricerche di oggi con la tua chiave: si azzerano ogni giorno.'
+    : 'Google Books rifiuta le ricerche senza chiave: è il limite condiviso. Aggiungi una chiave personale qui sopra.';
+  else if (status.google === 'badkey') verdict = 'Google rifiuta la chiave: controlla di averla copiata intera, che la Books API sia abilitata e che la restrizione del sito sia https://ronny421.github.io/*';
+  else verdict = 'Google Books non risponde: controlla la connessione e riprova.';
+  box.innerHTML = Object.values(status).map((v, i) => `<div class="src ${cls(v)}"><i></i>${esc(lines[i])}</div>`).join('') +
+    `<p class="verdict">${esc(verdict)}</p>`;
+}
+
+$('#btnLookupTest').addEventListener('click', runLookupTest);
+$('#btnKeySave').addEventListener('click', async () => {
+  const k = $('#gbKey').value.trim();
+  if (k && !/^[A-Za-z0-9_\-]{30,60}$/.test(k)) { toast('La chiave sembra incompleta: copiala di nuovo'); return; }
+  setGoogleKey(k);
+  toast(k ? 'Chiave salvata su questo telefono' : 'Chiave rimossa');
+  runLookupTest();
 });
 
 async function refreshOcrStatus() {
@@ -840,6 +898,15 @@ window.addEventListener('offline', renderPending);
 // ------------------------------------------------------------ avvio
 applyTheme(localStorage.getItem('theme') || 'auto');
 if ('serviceWorker' in navigator) {
+  const hadController = !!navigator.serviceWorker.controller;
+  let reloading = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    // Una nuova versione dell'app ha preso il controllo: ricarico per usarla
+    if (!hadController || reloading) return;
+    reloading = true;
+    if (!openStack.length) location.reload();
+    else toast("Nuova versione installata: chiudi e riapri l'app", 6000);
+  });
   navigator.serviceWorker.register('sw.js').catch(err => console.warn('SW', err));
 }
 reload();

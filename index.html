@@ -185,6 +185,28 @@
     <div class="grab"></div>
     <h2>Impostazioni</h2>
     <section class="set">
+      <h3>Ricerca dei dati online</h3>
+      <p class="hint">Titolo, autore e genere arrivano da Google Books e da Open Library. Senza chiave, Google Books usa un limite giornaliero condiviso fra tutti, spesso esaurito. Con una chiave personale gratuita hai 1.000 ricerche al giorno solo per te.</p>
+      <label class="field key-field"><span>Chiave API di Google Books (facoltativa)</span>
+        <input id="gbKey" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="AIza…"></label>
+      <div class="row-btns">
+        <button class="btn small" id="btnKeySave">Salva e verifica</button>
+        <button class="btn ghost small" id="btnLookupTest">Verifica gli archivi</button>
+      </div>
+      <div class="lookup-status" id="lookupStatus" aria-live="polite"></div>
+      <details class="how">
+        <summary>Come ottenere la chiave (gratis, circa 5 minuti)</summary>
+        <ol>
+          <li>Apri <a href="https://console.cloud.google.com/" target="_blank" rel="noopener">console.cloud.google.com</a> e accedi con il tuo account Google.</li>
+          <li>Crea un progetto: menu dei progetti in alto, poi «Nuovo progetto». Il nome è libero, per esempio Scaffale.</li>
+          <li>Nella barra di ricerca in alto scrivi «Books API», aprila e premi «Abilita».</li>
+          <li>Vai in «API e servizi», poi «Credenziali», «Crea credenziali», «Chiave API». Copia la chiave che compare.</li>
+          <li>Consigliato: modifica la chiave. In «Restrizioni dell'applicazione» scegli «Siti web» e aggiungi <code>https://ronny421.github.io/*</code>. In «Restrizioni API» lascia solo «Books API».</li>
+          <li>Incolla la chiave qui sopra e premi «Salva e verifica».</li>
+        </ol>
+      </details>
+    </section>
+    <section class="set">
       <h3>Lettura del testo offline</h3>
       <p class="hint" id="ocrStatus">Controllo in corso…</p>
       <div class="progress" id="ocrProgress" hidden><i></i></div>

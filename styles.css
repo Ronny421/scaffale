@@ -335,3 +335,19 @@ input[type="range"] { width: 100%; margin: 14px 0 4px; accent-color: var(--accen
   opacity: 0; pointer-events: none; transition: opacity .2s, translate .2s; z-index: 50; max-width: calc(100% - 32px);
 }
 .toast.show { opacity: 1; translate: -50% 0; }
+
+/* Ricerca online nelle impostazioni */
+.key-field { margin-top: 12px; }
+.key-field input { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 14px; }
+.lookup-status { margin-top: 10px; display: grid; gap: 6px; }
+.lookup-status:empty { display: none; }
+.lookup-status .src { display: flex; align-items: center; gap: 8px; font-size: 14.5px; }
+.lookup-status .src i { width: 10px; height: 10px; border-radius: 50%; flex: none; background: var(--ok); }
+.lookup-status .src.bad i { background: var(--danger); }
+.lookup-status .src.warn i { background: #E9B400; }
+.lookup-status .verdict { font-size: 14px; color: var(--muted); margin: 2px 0 0; }
+.how { margin-top: 12px; border: 1px solid var(--line); border-radius: 14px; padding: 10px 14px; background: var(--surface-2); }
+.how summary { cursor: pointer; font-weight: 650; font-size: 15px; }
+.how ol { margin: 10px 0 2px; padding-left: 20px; font-size: 14.5px; display: grid; gap: 6px; }
+.how a { color: var(--accent); font-weight: 650; }
+.how code { font-size: 13px; background: var(--surface); padding: 1px 5px; border-radius: 5px; border: 1px solid var(--line); word-break: break-all; }

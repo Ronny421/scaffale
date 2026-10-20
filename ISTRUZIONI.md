@@ -45,6 +45,18 @@ ed è proprio quello che GitHub Pages fornisce.
 | Esporta PDF | Sì |
 | Dati automatici da ISBN (titolo, autore, anno, genere, copertina) | No: servono gli archivi online. I libri aggiunti offline vengono completati quando torni online, con il pulsante "Completa ora" |
 
+## Se la ricerca per ISBN non trova i libri
+
+Google Books, senza una chiave, usa un limite giornaliero di richieste
+condiviso fra tutti gli utenti del mondo, che si esaurisce spesso. In quel caso
+l'app lo dice esplicitamente e prova anche Open Library. Per risolvere del
+tutto, crea una chiave personale gratuita (1.000 ricerche al giorno solo per te):
+in Impostazioni → «Ricerca dei dati online» trovi i passaggi e il pulsante
+«Verifica gli archivi», che mostra lo stato di ogni fonte.
+
+La chiave resta salvata solo sul telefono: non va mai scritta nei file del
+repository, che è pubblico.
+
 ## Permessi
 
 - **Fotocamera**: richiesta alla prima scansione. Se l'hai negata per sbaglio:

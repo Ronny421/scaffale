@@ -194,82 +194,203 @@ export function mapGenre(categories) {
 }
 
 // --- Ricerca dati online (solo quando c'è connessione) ----------------------
-async function fetchJson(url, ms = 8000) {
+// Tre archivi interrogati in parallelo. Per ciascuno si annota l'esito, così si
+// distingue "libro non trovato" da "archivio che ha rifiutato la richiesta".
+
+const KEY_STORAGE = 'googleBooksKey';
+export function getGoogleKey() {
+  try { return localStorage.getItem(KEY_STORAGE) || ''; } catch (e) { return ''; }
+}
+export function setGoogleKey(k) {
+  try { k && k.trim() ? localStorage.setItem(KEY_STORAGE, k.trim()) : localStorage.removeItem(KEY_STORAGE); } catch (e) { /* niente */ }
+}
+
+class HttpError extends Error {
+  constructor(status, body) { super('HTTP ' + status); this.status = status; this.body = body; }
+}
+
+async function fetchJson(url, ms = 12000) {
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), ms);
   try {
     const r = await fetch(url, { signal: ctrl.signal });
-    if (!r.ok) throw new Error('HTTP ' + r.status);
+    if (!r.ok) {
+      let body = null;
+      try { body = await r.json(); } catch (e) { /* corpo non JSON */ }
+      throw new HttpError(r.status, body);
+    }
     return await r.json();
   } finally { clearTimeout(t); }
+}
+
+// Esiti possibili di ogni archivio:
+// ok, empty (risponde ma non ha il libro), quota (limite di richieste esaurito),
+// badkey (chiave Google non valida o non autorizzata), error (rete, timeout, server giù)
+function classify(err, usedKey) {
+  if (err instanceof HttpError) {
+    const body = JSON.stringify(err.body || '');
+    if (err.status === 429 || /RESOURCE_EXHAUSTED|rateLimitExceeded|quota/i.test(body)) return 'quota';
+    if (usedKey && (err.status === 400 || err.status === 403)) return 'badkey';
+  }
+  return 'error';
+}
+
+const STATUS_TEXT = {
+  ok: 'funziona',
+  empty: 'funziona',
+  quota: 'limite di richieste esaurito',
+  badkey: 'chiave non valida o non autorizzata per questo sito',
+  error: 'non raggiungibile',
+};
+export function describeStatus(status) {
+  const names = { google: 'Google Books', openlibrary: 'Open Library', olsearch: 'Open Library (ricerca)' };
+  return Object.entries(status).map(([k, v]) => `${names[k]}: ${STATUS_TEXT[v]}`);
+}
+
+function googleUrl(query, extra = '') {
+  const key = getGoogleKey();
+  return `https://www.googleapis.com/books/v1/volumes?q=${query}${extra}` + (key ? `&key=${encodeURIComponent(key)}` : '');
 }
 
 function fromGoogle(item) {
   const v = item.volumeInfo || {};
   const ids = v.industryIdentifiers || [];
   const isbn = (ids.find(i => i.type === 'ISBN_13') || ids.find(i => i.type === 'ISBN_10') || {}).identifier || '';
+  const thumb = v.imageLinks && (v.imageLinks.thumbnail || v.imageLinks.smallThumbnail);
   return {
     title: [v.title, v.subtitle].filter(Boolean).join(': '),
     author: (v.authors || []).join(', '),
-    year: v.publishedDate ? parseInt(v.publishedDate, 10) || '' : '',
+    year: v.publishedDate ? String(parseInt(v.publishedDate, 10) || '') : '',
     publisher: v.publisher || '',
     pages: v.pageCount || '',
     genre: mapGenre(v.categories),
     isbn,
-    coverUrl: v.imageLinks && (v.imageLinks.thumbnail || v.imageLinks.smallThumbnail)
-      ? (v.imageLinks.thumbnail || v.imageLinks.smallThumbnail).replace('http://', 'https://') : '',
+    coverUrl: thumb ? thumb.replace('http://', 'https://').replace('&edge=curl', '') : '',
   };
 }
 
-export async function lookupIsbn(isbn) {
-  isbn = cleanIsbn(isbn);
-  // 1) Google Books
-  try {
-    const g = await fetchJson(`https://www.googleapis.com/books/v1/volumes?q=isbn:${isbn}`);
-    if (g.items && g.items.length) {
-      const r = fromGoogle(g.items[0]);
-      r.isbn = isbn;
-      r.coverUrl = `https://covers.openlibrary.org/b/isbn/${isbn}-L.jpg?default=false`;
-      return r;
-    }
-  } catch (e) { /* passa alla fonte successiva */ }
-  // 2) Open Library
-  try {
-    const o = await fetchJson(`https://openlibrary.org/api/books?bibkeys=ISBN:${isbn}&format=json&jscmd=data`);
-    const d = o[`ISBN:${isbn}`];
-    if (d) {
-      return {
-        title: [d.title, d.subtitle].filter(Boolean).join(': '),
-        author: (d.authors || []).map(a => a.name).join(', '),
-        year: d.publish_date ? (String(d.publish_date).match(/\d{4}/) || [''])[0] : '',
-        publisher: (d.publishers || []).map(p => p.name).join(', '),
-        pages: d.number_of_pages || '',
-        genre: mapGenre((d.subjects || []).map(s => s.name)),
-        isbn,
-        coverUrl: d.cover ? (d.cover.large || d.cover.medium) : '',
-      };
-    }
-  } catch (e) { /* nessun risultato */ }
-  return null;
+async function googleByIsbn(isbn) {
+  const g = await fetchJson(googleUrl('isbn:' + isbn));
+  return g.items && g.items.length ? fromGoogle(g.items[0]) : null;
 }
 
+async function openLibraryByIsbn(isbn) {
+  const o = await fetchJson(`https://openlibrary.org/api/books?bibkeys=ISBN:${isbn}&format=json&jscmd=data`);
+  const d = o[`ISBN:${isbn}`];
+  if (!d) return null;
+  return {
+    title: [d.title, d.subtitle].filter(Boolean).join(': '),
+    author: (d.authors || []).map(a => a.name).join(', '),
+    year: d.publish_date ? (String(d.publish_date).match(/\d{4}/) || [''])[0] : '',
+    publisher: (d.publishers || []).map(p => p.name).join(', '),
+    pages: d.number_of_pages || '',
+    genre: mapGenre((d.subjects || []).map(s => s.name)),
+    coverUrl: d.cover ? (d.cover.large || d.cover.medium || '') : '',
+  };
+}
+
+const OL_FIELDS = 'title,subtitle,author_name,first_publish_year,publisher,number_of_pages_median,subject,cover_i';
+function fromOlDoc(d) {
+  return {
+    title: [d.title, d.subtitle].filter(Boolean).join(': '),
+    author: (d.author_name || []).join(', '),
+    year: d.first_publish_year ? String(d.first_publish_year) : '',
+    publisher: (d.publisher || [])[0] || '',
+    pages: d.number_of_pages_median || '',
+    genre: mapGenre(d.subject),
+    isbn: '',
+    coverUrl: d.cover_i ? `https://covers.openlibrary.org/b/id/${d.cover_i}-M.jpg` : '',
+  };
+}
+
+async function openLibrarySearchByIsbn(isbn) {
+  const s = await fetchJson(`https://openlibrary.org/search.json?isbn=${isbn}&fields=${OL_FIELDS}&limit=1`);
+  return s.docs && s.docs.length ? fromOlDoc(s.docs[0]) : null;
+}
+
+// Unisce i risultati: il primo archivio ha la precedenza, gli altri riempiono i vuoti
+function merge(base, extra) {
+  if (!base) return { ...extra, coverUrls: extra.coverUrl ? [extra.coverUrl] : [] };
+  for (const k of ['title', 'author', 'year', 'publisher', 'pages', 'genre']) {
+    if (!base[k] && extra[k]) base[k] = extra[k];
+  }
+  if (extra.coverUrl) base.coverUrls.push(extra.coverUrl);
+  return base;
+}
+
+// Restituisce { book, outcome, status }
+// outcome: found | notfound | quota | badkey | unreachable
+export async function lookupIsbn(raw) {
+  const isbn = cleanIsbn(raw);
+  const usedKey = !!getGoogleKey();
+  const sources = [
+    ['google', googleByIsbn(isbn)],
+    ['openlibrary', openLibraryByIsbn(isbn)],
+    ['olsearch', openLibrarySearchByIsbn(isbn)],
+  ];
+  const settled = await Promise.allSettled(sources.map(s => s[1]));
+  const status = {};
+  let book = null;
+  settled.forEach((res, i) => {
+    const name = sources[i][0];
+    if (res.status === 'fulfilled') {
+      status[name] = res.value ? 'ok' : 'empty';
+      if (res.value) book = merge(book, res.value);
+    } else {
+      status[name] = classify(res.reason, name === 'google' && usedKey);
+    }
+  });
+  if (book) {
+    book.isbn = isbn;
+    // La copertina di Open Library per ISBN è la più affidabile da scaricare
+    book.coverUrls.unshift(`https://covers.openlibrary.org/b/isbn/${isbn}-L.jpg?default=false`);
+    book.coverUrl = book.coverUrls.find(u => !u.includes('default=false')) || '';
+    return { book, outcome: 'found', status };
+  }
+  let outcome = 'notfound';
+  if (status.google === 'quota') outcome = 'quota';
+  else if (status.google === 'badkey') outcome = 'badkey';
+  else if (Object.values(status).every(s => s === 'error')) outcome = 'unreachable';
+  else if (status.google === 'error') outcome = 'unreachable';
+  return { book: null, outcome, status };
+}
+
+// Ricerca per titolo/autore: Google Books, e Open Library se Google non risponde
+// Restituisce { results, outcome }
 export async function searchByText(title, author) {
   const q = [title && `intitle:${title}`, author && `inauthor:${author}`].filter(Boolean).join('+');
-  if (!q) return [];
+  if (!q) return { results: [], outcome: 'notfound' };
+  let googleOutcome = 'notfound';
   try {
-    const g = await fetchJson(`https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(q)}&maxResults=6`);
-    return (g.items || []).map(fromGoogle);
-  } catch (e) { return []; }
+    const g = await fetchJson(googleUrl(encodeURIComponent(q), '&maxResults=6'));
+    const results = (g.items || []).map(fromGoogle);
+    if (results.length) return { results, outcome: 'found' };
+  } catch (e) {
+    googleOutcome = classify(e, !!getGoogleKey());
+  }
+  try {
+    const p = new URLSearchParams({ limit: '6', fields: OL_FIELDS });
+    if (title) p.set('title', title);
+    if (author) p.set('author', author);
+    const s = await fetchJson('https://openlibrary.org/search.json?' + p);
+    const results = (s.docs || []).map(fromOlDoc);
+    if (results.length) return { results, outcome: 'found' };
+  } catch (e) {
+    if (googleOutcome !== 'notfound') return { results: [], outcome: googleOutcome === 'error' ? 'unreachable' : googleOutcome };
+    return { results: [], outcome: 'unreachable' };
+  }
+  return { results: [], outcome: googleOutcome === 'notfound' ? 'notfound' : googleOutcome === 'error' ? 'unreachable' : googleOutcome };
 }
 
-// Scarica la copertina dal web e la rimpicciolisce; se il server non lo consente, pazienza
-export async function fetchCover(url) {
-  if (!url) return null;
-  try {
-    const r = await fetch(url);
-    if (!r.ok) return null;
-    const blob = await r.blob();
-    if (!blob.type.startsWith('image/') || blob.size < 1500) return null;
-    return blob;
-  } catch (e) { return null; }
+// Scarica la copertina provando più indirizzi; se nessun server lo consente, pazienza
+export async function fetchCover(urls) {
+  for (const url of [].concat(urls || []).filter(Boolean)) {
+    try {
+      const r = await fetch(url);
+      if (!r.ok) continue;
+      const blob = await r.blob();
+      if (blob.type.startsWith('image/') && blob.size > 1500) return blob;
+    } catch (e) { /* prova il prossimo */ }
+  }
+  return null;
 }
