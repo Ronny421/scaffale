@@ -146,6 +146,43 @@ export function isValidIsbn(raw) {
   return false;
 }
 
+// --- Codici EAN ---------------------------------------------------------------
+// Sui libri il codice a barre è un EAN-13. Se inizia con 978 o 979 è l'ISBN-13 stesso.
+// 977 indica una pubblicazione periodica (fumetti e libri da edicola) e contiene l'ISSN.
+// Gli altri prefissi sono codici prodotto generici (etichette dei negozi, allegati ai giornali…).
+
+// Cifra di controllo GTIN, valida per EAN-13, EAN-8 e UPC-A: partendo da destra,
+// le cifre si moltiplicano alternatamente per 3 e per 1.
+export function isValidEan(raw) {
+  const s = String(raw || '').replace(/\D/g, '');
+  if (![8, 12, 13].includes(s.length)) return false;
+  const digits = s.split('').map(Number);
+  const check = digits.pop();
+  let sum = 0;
+  digits.reverse().forEach((d, i) => { sum += d * (i % 2 === 0 ? 3 : 1); });
+  return (10 - (sum % 10)) % 10 === check;
+}
+
+// EAN 977xxxxxxxyyc -> ISSN xxxx-xxxK (la cifra K si ricalcola: pesi da 8 a 2, modulo 11)
+export function issnFromEan(ean) {
+  const core = ean.slice(3, 10);
+  let sum = 0;
+  for (let i = 0; i < 7; i++) sum += (8 - i) * +core[i];
+  const c = (11 - (sum % 11)) % 11;
+  return `${core.slice(0, 4)}-${core.slice(4)}${c === 10 ? 'X' : c}`;
+}
+
+// Riconosce che codice è: { type: 'isbn' | 'issn' | 'ean', code, issn? } oppure null
+export function classifyCode(raw) {
+  const s = String(raw || '').toUpperCase().replace(/[^0-9X]/g, '');
+  if (isValidIsbn(s)) return { type: 'isbn', code: s };
+  if (!/^\d+$/.test(s) || !isValidEan(s)) return null;
+  const ean = s.length === 12 ? '0' + s : s; // UPC-A americano -> EAN-13
+  if (/^97[89]/.test(ean)) return { type: 'isbn', code: ean };
+  if (/^977/.test(ean)) return { type: 'issn', code: ean, issn: issnFromEan(ean) };
+  return { type: 'ean', code: ean };
+}
+
 // Cerca ISBN e anno dentro un testo letto dall'OCR (utile sulla pagina del copyright)
 export function extractFromText(text) {
   const out = {};
@@ -488,6 +525,20 @@ export async function searchByText(title, author) {
   if (google.kind === 'empty') return { results: [], outcome: 'notfound' };
   const outcome = google.kind === 'unreachable' ? (olFailed ? 'offline' : 'unreachable') : google.kind;
   return { results: [], outcome, detail: google.detail };
+}
+
+// Codici EAN che non sono ISBN: gli archivi dei libri di solito non li conoscono.
+// Si chiede a Google Books e si tengono solo i risultati che riportano proprio quel
+// codice, per non proporre libri a caso. Restituisce { results, outcome, detail }
+export async function lookupEan(code) {
+  try {
+    const g = await googleFetch(code);
+    const results = (g.items || []).filter(it => hasIsbn(it, code)).map(fromGoogle);
+    return { results, outcome: results.length ? 'found' : 'notfound' };
+  } catch (err) {
+    const c = classify(err, !!getGoogleKey());
+    return { results: [], outcome: c.kind, detail: c.detail };
+  }
 }
 
 // Scarica la copertina provando più indirizzi; se nessun server lo consente, pazienza

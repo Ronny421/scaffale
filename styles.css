@@ -361,3 +361,6 @@ input[type="range"] { width: 100%; margin: 14px 0 4px; accent-color: var(--accen
 .lookup-status .src { align-items: flex-start; }
 .lookup-status .src i { margin-top: 6px; }
 .lookup-status .src small { display: block; color: var(--muted); font-size: 12.5px; line-height: 1.35; margin-top: 2px; overflow-wrap: anywhere; }
+
+.banner.install { background: var(--accent); color: var(--accent-ink); }
+.banner.install .btn { background: var(--accent-ink); color: var(--accent); flex: none; }

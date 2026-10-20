@@ -2,13 +2,13 @@ import { db, newId } from './db.js';
 import {
   GENRES, genreColor, hash, buildAuthorResolver, similarAuthor, cleanIsbn, isValidIsbn,
   extractFromText, lookupIsbn, searchByText, fetchCover, getGoogleKey, setGoogleKey, statusReport,
-  getStoredGoogleKey, BUILTIN_GOOGLE_KEY,
+  getStoredGoogleKey, BUILTIN_GOOGLE_KEY, classifyCode, lookupEan,
 } from './catalog.js';
 import { barcodeSupported, scanIsbn } from './scanner.js';
 import { ocrReady, downloadOcr, removeOcr, recognize } from './ocr.js';
 import { buildPdf } from './pdf.js';
 
-const VERSION = '1.4.0';
+const VERSION = '1.5.0';
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -19,6 +19,20 @@ const state = {
   view: localStorage.getItem('view') || 'shelf',
   q: '',
 };
+
+// ------------------------------------------------------------ installazione
+// Chrome per Android avvisa con l'evento "beforeinstallprompt" quando l'app si può
+// installare: lo trattengo e mostro un pulsante, così non serve cercare nel menu ⋮
+let installEvent = null;
+window.addEventListener('beforeinstallprompt', e => {
+  e.preventDefault();
+  installEvent = e;
+  $('#installBar').hidden = false;
+});
+window.addEventListener('appinstalled', () => {
+  installEvent = null;
+  $('#installBar').hidden = true;
+});
 
 // ---------------------------------------------------------------- utilità
 const LOOKUP_MSG = {
@@ -450,6 +464,8 @@ function openForm(data = {}, opts = {}) {
   $('#ocrBox').hidden = true;
   $('#ocrLines').innerHTML = '';
   $('#candidates').innerHTML = '';
+  $('#eanBox').hidden = true;
+  $('#eanCandidates').innerHTML = '';
   lastField = 'title';
   openSheet($('#dlgForm'));
 }
@@ -610,21 +626,38 @@ $('#btnSearchOnline').addEventListener('click', async () => {
     box.innerHTML = `<p class="hint">${outcome === 'notfound' ? 'Nessun risultato. Prova a correggere il titolo.' : esc(lookupMessage(outcome, detail))}</p>`;
     return;
   }
+  renderCandidates(box, res);
+});
+
+function renderCandidates(box, res) {
   box._res = res;
   box.innerHTML = res.map((r, i) => `<button type="button" class="cand" data-i="${i}">
     ${r.coverUrl ? `<img src="${esc(r.coverUrl)}" alt="" loading="lazy">` : '<span class="ph"></span>'}
     <span><strong>${esc(r.title)}</strong><small>${esc([r.author, r.year, r.publisher].filter(Boolean).join(', '))}</small></span></button>`).join('');
-});
-$('#candidates').addEventListener('click', async e => {
-  const c = e.target.closest('.cand'); if (!c) return;
-  const r = $('#candidates')._res[+c.dataset.i];
-  fillForm(r);
-  $('#candidates').innerHTML = '';
-  toast('Dati inseriti: controlla e salva');
-  await maybeCover([r.isbn && `https://covers.openlibrary.org/b/isbn/${r.isbn}-L.jpg?default=false`, r.coverUrl]);
-});
+}
+for (const id of ['#candidates', '#eanCandidates']) {
+  $(id).addEventListener('click', async e => {
+    const c = e.target.closest('.cand'); if (!c) return;
+    const r = $(id)._res[+c.dataset.i];
+    const code = form.elements.isbn.value;
+    fillForm({ ...r, isbn: id === '#eanCandidates' ? code : r.isbn });
+    $(id).innerHTML = '';
+    if (id === '#eanCandidates') $('#eanBox').hidden = true;
+    toast('Dati inseriti: controlla e salva');
+    await maybeCover([r.isbn && `https://covers.openlibrary.org/b/isbn/${r.isbn}-L.jpg?default=false`, r.coverUrl]);
+  });
+}
 
 // ------------------------------------------------------------ aggiunta
+$('#btnInstall').addEventListener('click', async () => {
+  if (!installEvent) return;
+  installEvent.prompt();
+  const choice = await installEvent.userChoice.catch(() => null);
+  installEvent = null;
+  $('#installBar').hidden = true;
+  if (choice && choice.outcome === 'accepted') toast('Scaffale è installata: la trovi nella schermata Home');
+});
+
 $('#btnAdd').addEventListener('click', () => openSheet($('#dlgAdd')));
 $('#addManual').addEventListener('click', () => { closeSheet($('#dlgAdd')); openForm({}); });
 $('#addPhoto').addEventListener('click', () => $('#photoInput').click());
@@ -643,15 +676,15 @@ $('#addScan').addEventListener('click', async () => {
   openSheet($('#dlgScan'));
   $('#isbnManual').value = '';
   if (!barcodeSupported()) {
-    $('.scan-hint').textContent = 'Questo browser non legge i codici a barre: scrivi l\'ISBN qui sotto. Usa Chrome per Android.';
+    $('.scan-hint').textContent = 'Questo browser non legge i codici a barre: scrivi l\'ISBN o l\'EAN qui sotto. Usa Chrome per Android.';
     return;
   }
-  $('.scan-hint').textContent = 'Inquadra il codice a barre che inizia con 978 o 979';
+  $('.scan-hint').textContent = 'Inquadra il codice a barre del libro: di solito è sul retro, in basso';
   scanAbort = new AbortController();
   try {
-    const isbn = await scanIsbn($('#video'), { signal: scanAbort.signal });
+    const code = await scanIsbn($('#video'), { signal: scanAbort.signal });
     closeSheet($('#dlgScan'));
-    handleIsbn(isbn);
+    handleCode(code);
   } catch (err) {
     if (err.name === 'AbortError') return;
     if (err.name === 'NotAllowedError') $('.scan-hint').textContent = 'Permesso fotocamera negato. Abilitalo nelle impostazioni del telefono, oppure scrivi l\'ISBN.';
@@ -664,11 +697,48 @@ $('#dlgScan').addEventListener('sheetclosed', () => {
 });
 $('#isbnForm').addEventListener('submit', e => {
   e.preventDefault();
-  const v = cleanIsbn($('#isbnManual').value);
-  if (!isValidIsbn(v)) { toast('ISBN non valido: controlla le cifre'); return; }
+  const info = classifyCode($('#isbnManual').value);
+  if (!info) { toast('Codice non valido: controlla le cifre'); return; }
   closeSheet($('#dlgScan'));
-  handleIsbn(v);
+  handleCode(info.code);
 });
+
+// Smista il codice letto: ISBN (978/979), periodico (977, contiene l'ISSN) o EAN generico
+async function handleCode(raw) {
+  const info = classifyCode(raw);
+  if (!info) { toast('Codice non valido: controlla le cifre'); return; }
+  if (info.type === 'isbn') return handleIsbn(info.code);
+
+  const dup = state.books.find(b => b.isbn === info.code);
+  if (dup) { toast('Questo codice è già nel tuo scaffale'); openDetail(dup.id); return; }
+  const what = info.type === 'issn'
+    ? `È il codice di una pubblicazione periodica (ISSN ${info.issn}), come i fumetti e i libri venduti in edicola: gli archivi dei libri di solito non lo contengono.`
+    : 'Questo codice EAN non è un ISBN, quindi gli archivi dei libri di solito non lo contengono.';
+  const tip = info.type === 'issn'
+    ? ' Fotografa la copertina per leggere titolo e numero.'
+    : ' Se sul libro c\'è un altro codice a barre che inizia con 978 o 979, scansiona quello: è l\'ISBN. Altrimenti fotografa la copertina.';
+  if (!navigator.onLine) {
+    openForm({ isbn: info.code }, { hint: what + tip });
+    return;
+  }
+  toast('Cerco il codice…', 15000);
+  const { results, outcome, detail } = await lookupEan(info.code);
+  $('#toast').classList.remove('show');
+  if (results.length) {
+    openForm({ isbn: info.code }, { hint: what + ' Però Google Books ha qualcosa: guarda qui sotto.' });
+    renderCandidates($('#eanCandidates'), results);
+    $('#eanBox').hidden = false;
+    return;
+  }
+  const short = {
+    quota: 'ha il limite di ricerche esaurito',
+    temporary: 'ha un guasto temporaneo',
+    unreachable: 'non è raggiungibile',
+    offline: 'non è raggiungibile',
+  }[outcome] || 'ha rifiutato la richiesta';
+  const problem = outcome !== 'notfound' ? ` Nota: in questo momento Google Books ${short}, quindi potresti riprovare più tardi.` : '';
+  openForm({ isbn: info.code }, { hint: what + tip + problem });
+}
 
 async function handleIsbn(isbn) {
   const dup = state.books.find(b => b.isbn === isbn);
@@ -794,6 +864,7 @@ async function openSettings(focusKey) {
   $('#gbKey').placeholder = BUILTIN_GOOGLE_KEY ? "Usa la chiave integrata nell'app" : 'AIza…';
   $('#lookupStatus').innerHTML = '';
   $('#keyHow').open = !!focusKey && !getGoogleKey();
+  refreshInviteHint();
   if (focusKey) $('#keySection').scrollIntoView({ block: 'start' });
   refreshOcrStatus();
   if (navigator.storage && navigator.storage.estimate) {
@@ -879,6 +950,7 @@ $('#btnKeySave').addEventListener('click', async () => {
   }
   $('#gbKey').value = k;
   setGoogleKey(k);
+  refreshInviteHint();
   toast(k ? 'Chiave salvata su questo telefono' : 'Chiave rimossa');
   runLookupTest();
 });
@@ -953,6 +1025,51 @@ $('#restoreInput').addEventListener('change', async e => {
   } catch (err) { toast('File non valido: scegli una copia creata da Scaffale'); }
 });
 
+// ------------------------------------------------------------ invito
+// Il link contiene la chiave nel "frammento", la parte dopo #: il browser non lo invia
+// mai al server, quindi la chiave non passa da GitHub. Chi apre il link la trova salvata.
+function inviteLink() {
+  const url = new URL('./', location.href);
+  const key = getGoogleKey();
+  if (key) url.hash = 'invito=' + encodeURIComponent(key);
+  return url.href;
+}
+function refreshInviteHint() {
+  $('#inviteHint').textContent = getGoogleKey()
+    ? "Manda a un'altra persona il link per installare Scaffale. Il link contiene la tua chiave di ricerca: chi lo apre trova la ricerca dei libri già pronta. Mandalo solo a persone di cui ti fidi."
+    : "Manda a un'altra persona il link per installare Scaffale. Non hai una chiave salvata: chi lo apre dovrà configurare la ricerca da sé.";
+}
+$('#btnInvite').addEventListener('click', async () => {
+  const url = inviteLink();
+  const text = 'Ti consiglio Scaffale, l\'app per catalogare i libri di casa. Apri il link con Chrome e premi «Installa» (oppure menu ⋮ → «Aggiungi a schermata Home»).' +
+    (getGoogleKey() ? ' La ricerca dei libri è già configurata.' : '');
+  if (navigator.share) {
+    try { await navigator.share({ title: 'Scaffale', text, url }); return; }
+    catch (e) { if (e.name === 'AbortError') return; }
+  }
+  try {
+    await navigator.clipboard.writeText(`${text}\n${url}`);
+    toast('Invito copiato: incollalo in un messaggio');
+  } catch (e) {
+    window.prompt('Copia questo link e mandalo:', url);
+  }
+});
+
+// All'apertura di un link di invito: salva la chiave e la toglie dall'indirizzo
+function acceptInvite() {
+  const m = location.hash.match(/invito=([^&]+)/);
+  if (!m) return;
+  history.replaceState(null, '', location.pathname + location.search);
+  let key = '';
+  try { key = decodeURIComponent(m[1]); } catch (e) { /* link rovinato */ }
+  if (!/^AIza[0-9A-Za-z_\-]{30,56}$/.test(key)) { toast('Il link di invito non è valido'); return; }
+  const current = getStoredGoogleKey();
+  if (current === key) return;
+  if (current && !confirm('Il link di invito contiene una chiave di ricerca diversa da quella che hai già salvato. Vuoi sostituirla?')) return;
+  setGoogleKey(key);
+  toast('Benvenuto! La ricerca dei libri è già configurata.', 5000);
+}
+
 async function requestPersistence() {
   if (navigator.storage && navigator.storage.persist) {
     try { await navigator.storage.persist(); } catch (e) { /* facoltativo */ }
@@ -976,6 +1093,7 @@ window.addEventListener('offline', renderPending);
 
 // ------------------------------------------------------------ avvio
 applyTheme(localStorage.getItem('theme') || 'auto');
+acceptInvite();
 if ('serviceWorker' in navigator) {
   const hadController = !!navigator.serviceWorker.controller;
   let reloading = false;

@@ -53,6 +53,11 @@
     </div>
   </header>
 
+  <div class="banner install" id="installBar" hidden>
+    <span>Installa Scaffale: avrai l'icona nella schermata Home e funzionerà anche senza internet.</span>
+    <button class="btn small" id="btnInstall">Installa</button>
+  </div>
+
   <div class="banner" id="pending" hidden>
     <span id="pendingText"></span>
     <button class="link" id="btnComplete">Completa ora</button>
@@ -90,10 +95,10 @@
     <div class="scan-wrap">
       <video id="video" playsinline muted></video>
       <div class="scan-frame"><span></span></div>
-      <p class="scan-hint">Inquadra il codice a barre che inizia con 978 o 979</p>
+      <p class="scan-hint">Inquadra il codice a barre del libro</p>
     </div>
     <form class="manual-isbn" id="isbnForm">
-      <input id="isbnManual" inputmode="numeric" placeholder="Oppure scrivi l'ISBN" autocomplete="off">
+      <input id="isbnManual" inputmode="numeric" placeholder="Oppure scrivi l'ISBN o l'EAN" autocomplete="off">
       <button class="btn" type="submit">Cerca</button>
     </form>
     <button class="btn ghost wide" data-close>Annulla</button>
@@ -129,6 +134,11 @@
         <div class="candidates" id="candidates"></div>
       </div>
 
+      <div class="ocr" id="eanBox" hidden>
+        <div class="ocr-head"><strong>Possibili corrispondenze</strong><span class="hint">Tocca quella giusta per riempire i campi.</span></div>
+        <div class="candidates" id="eanCandidates"></div>
+      </div>
+
       <label class="field"><span>Titolo</span><input name="title" required autocomplete="off"></label>
       <label class="field"><span>Autore</span><input name="author" autocomplete="off" list="authorsList"></label>
       <datalist id="authorsList"></datalist>
@@ -143,7 +153,7 @@
         <input name="genre" id="genreInput" placeholder="Oppure scrivi un genere" autocomplete="off">
       </div>
       <div class="field-row">
-        <label class="field"><span>ISBN</span><input name="isbn" inputmode="numeric" autocomplete="off"></label>
+        <label class="field"><span>ISBN o EAN</span><input name="isbn" inputmode="numeric" autocomplete="off"></label>
         <label class="field"><span>Editore</span><input name="publisher" autocomplete="off"></label>
       </div>
       <div class="form-actions">
@@ -210,6 +220,11 @@
           <li>Torna qui, premi «Incolla» e poi «Salva e verifica».</li>
         </ol>
       </details>
+    </section>
+    <section class="set">
+      <h3>Invita qualcuno</h3>
+      <p class="hint" id="inviteHint">Manda a un'altra persona il link per installare Scaffale.</p>
+      <button class="btn small" id="btnInvite">Invita qualcuno</button>
     </section>
     <section class="set">
       <h3>Lettura del testo offline</h3>

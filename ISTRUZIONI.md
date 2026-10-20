@@ -57,6 +57,25 @@ in Impostazioni → «Ricerca dei dati online» trovi i passaggi e il pulsante
 La chiave resta salvata solo sul telefono: non va mai scritta nei file del
 repository, che è pubblico.
 
+## Farla installare a un'altra persona
+
+In Impostazioni → «Invita qualcuno» l'app crea un link da mandare (per esempio su
+WhatsApp). Se hai salvato una chiave di ricerca, il link la contiene già: chi lo
+apre con Chrome trova la ricerca dei libri configurata e un pulsante «Installa».
+La chiave sta dopo il simbolo # del link, una parte che il browser non invia mai
+al server. Manda il link solo a persone di cui ti fidi.
+
+Ogni telefono ha la sua libreria separata: i libri non si vedono fra telefoni.
+
+## Codici a barre: ISBN ed EAN
+
+Sui libri il codice a barre è un EAN-13. Se inizia con 978 o 979 è l'ISBN stesso
+e l'app trova i dati in automatico. Se inizia con 977 è una pubblicazione periodica
+(fumetti, libri da edicola): l'app mostra l'ISSN e ti propone di fotografare la
+copertina. Gli altri EAN (per esempio le etichette dei negozi) vengono cercati, ma
+spesso non compaiono negli archivi: se sul libro c'è un altro codice che inizia con
+978 o 979, scansiona quello.
+
 ## Permessi
 
 - **Fotocamera**: richiesta alla prima scansione. Se l'hai negata per sbaglio:
