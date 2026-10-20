@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Scaffale</title>
+  <meta name="description" content="La tua libreria di casa: scansiona, cataloga e tieni il segno.">
+  <meta name="theme-color" content="#3A3FD4">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon-192.png" type="image/png">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wdth,wght@12..96,75..100,400..800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></symbol>
+    <symbol id="i-gear" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></g></symbol>
+    <symbol id="i-pdf" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M12 11v6M9 14l3 3 3-3"/></g></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></g></symbol>
+    <symbol id="i-shelf" viewBox="0 0 24 24"><g fill="currentColor"><rect x="3" y="4" width="4" height="14" rx="1"/><rect x="8.5" y="6" width="3.5" height="12" rx="1"/><rect x="13.5" y="3" width="4" height="15" rx="1"/><rect x="2" y="19" width="20" height="2" rx="1"/></g></symbol>
+    <symbol id="i-list" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M9 6h11M9 12h11M9 18h11"/><path d="M4 6h.01M4 12h.01M4 18h.01" stroke-width="3"/></g></symbol>
+    <symbol id="i-barcode" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 7V4h3M21 7V4h-3M3 17v3h3M21 17v3h-3M7 8v8M10 8v8M13 8v8M17 8v8"/></g></symbol>
+    <symbol id="i-camera" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M4 8h3l2-3h6l2 3h3a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1z"/><circle cx="12" cy="13.5" r="3.5"/></g></symbol>
+    <symbol id="i-pen" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="m13.5 6.5 4 4"/></g></symbol>
+    <symbol id="i-close" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></symbol>
+    <symbol id="i-ribbon" viewBox="0 0 24 24"><path d="M7 3h10v18l-5-4-5 4z" fill="currentColor"/></symbol>
+  </svg>
+
+  <header class="top">
+    <div class="top-row">
+      <h1 class="brand">Scaffale</h1>
+      <div class="top-actions">
+        <button class="icon-btn" id="btnExport" aria-label="Esporta PDF"><svg><use href="#i-pdf"/></svg></button>
+        <button class="icon-btn" id="btnSettings" aria-label="Impostazioni"><svg><use href="#i-gear"/></svg></button>
+      </div>
+    </div>
+    <p class="stats" id="stats"></p>
+    <label class="search">
+      <svg><use href="#i-search"/></svg>
+      <input id="q" type="search" placeholder="Cerca titolo, autore, ISBN…" autocomplete="off">
+    </label>
+    <div class="controls">
+      <div class="seg" id="groupBy" role="radiogroup" aria-label="Raggruppa per">
+        <button role="radio" data-g="genre" aria-checked="true">Genere</button>
+        <button role="radio" data-g="author" aria-checked="false">Autore</button>
+        <button role="radio" data-g="year" aria-checked="false">Anno</button>
+        <button role="radio" data-g="status" aria-checked="false">Lettura</button>
+      </div>
+      <button class="icon-btn small" id="btnView" aria-label="Cambia vista"><svg><use href="#i-list"/></svg></button>
+    </div>
+  </header>
+
+  <div class="banner" id="pending" hidden>
+    <span id="pendingText"></span>
+    <button class="link" id="btnComplete">Completa ora</button>
+  </div>
+
+  <main id="shelf" aria-live="polite"></main>
+
+  <button class="fab" id="btnAdd"><svg><use href="#i-plus"/></svg><span>Aggiungi libro</span></button>
+  <div class="toast" id="toast" role="status"></div>
+
+  <!-- Scelta del modo di aggiunta -->
+  <dialog class="sheet" id="dlgAdd">
+    <div class="grab"></div>
+    <h2>Aggiungi un libro</h2>
+    <div class="choices">
+      <button class="choice" id="addScan">
+        <span class="choice-ic" style="--c:#3A3FD4"><svg><use href="#i-barcode"/></svg></span>
+        <span><strong>Scansiona il codice a barre</strong><small>Sul retro di copertina. Il modo più preciso: titolo, autore, anno e genere arrivano da soli.</small></span>
+      </button>
+      <button class="choice" id="addPhoto">
+        <span class="choice-ic" style="--c:#E63946"><svg><use href="#i-camera"/></svg></span>
+        <span><strong>Fotografa copertina o prime pagine</strong><small>L'app legge il testo della foto e ti propone titolo, autore, anno e ISBN.</small></span>
+      </button>
+      <button class="choice" id="addManual">
+        <span class="choice-ic" style="--c:#2A9D8F"><svg><use href="#i-pen"/></svg></span>
+        <span><strong>Inserisci a mano</strong><small>Per libri senza codice o molto vecchi.</small></span>
+      </button>
+    </div>
+    <input type="file" id="photoInput" accept="image/*" capture="environment" hidden>
+    <button class="btn ghost wide" data-close>Annulla</button>
+  </dialog>
+
+  <!-- Scanner codice a barre -->
+  <dialog class="sheet full" id="dlgScan">
+    <div class="scan-wrap">
+      <video id="video" playsinline muted></video>
+      <div class="scan-frame"><span></span></div>
+      <p class="scan-hint">Inquadra il codice a barre che inizia con 978 o 979</p>
+    </div>
+    <form class="manual-isbn" id="isbnForm">
+      <input id="isbnManual" inputmode="numeric" placeholder="Oppure scrivi l'ISBN" autocomplete="off">
+      <button class="btn" type="submit">Cerca</button>
+    </form>
+    <button class="btn ghost wide" data-close>Annulla</button>
+  </dialog>
+
+  <!-- Scheda modifica -->
+  <dialog class="sheet tall" id="dlgForm">
+    <div class="grab"></div>
+    <form id="bookForm" method="dialog" novalidate>
+      <div class="form-head">
+        <button type="button" class="cover-pick" id="coverPick" aria-label="Foto di copertina">
+          <img id="coverPreview" alt="" hidden>
+          <span id="coverEmpty"><svg><use href="#i-camera"/></svg>Copertina</span>
+        </button>
+        <div class="form-head-text">
+          <h2 id="formTitle">Nuovo libro</h2>
+          <p class="hint" id="formHint"></p>
+        </div>
+      </div>
+      <input type="file" id="coverInput" accept="image/*" capture="environment" hidden>
+
+      <div class="ocr" id="ocrBox" hidden>
+        <div class="ocr-head">
+          <strong>Testo letto nella foto</strong>
+          <span class="hint">Tocca il campo da riempire, poi tocca una riga.</span>
+        </div>
+        <div class="chips" id="ocrLines"></div>
+        <div class="ocr-actions">
+          <button type="button" class="btn ghost small" id="btnMorePhoto"><svg><use href="#i-camera"/></svg>Leggi un'altra pagina</button>
+          <button type="button" class="btn ghost small" id="btnSearchOnline"><svg><use href="#i-search"/></svg>Cerca online</button>
+        </div>
+        <input type="file" id="morePhotoInput" accept="image/*" capture="environment" hidden>
+        <div class="candidates" id="candidates"></div>
+      </div>
+
+      <label class="field"><span>Titolo</span><input name="title" required autocomplete="off"></label>
+      <label class="field"><span>Autore</span><input name="author" autocomplete="off" list="authorsList"></label>
+      <datalist id="authorsList"></datalist>
+      <button type="button" class="suggest" id="authorSuggest" hidden></button>
+      <div class="field-row">
+        <label class="field"><span>Anno</span><input name="year" inputmode="numeric" maxlength="4" autocomplete="off"></label>
+        <label class="field"><span>Pagine totali</span><input name="pages" inputmode="numeric" autocomplete="off"></label>
+      </div>
+      <div class="field">
+        <span>Genere</span>
+        <div class="chips genre-chips" id="genreChips"></div>
+        <input name="genre" id="genreInput" placeholder="Oppure scrivi un genere" autocomplete="off">
+      </div>
+      <div class="field-row">
+        <label class="field"><span>ISBN</span><input name="isbn" inputmode="numeric" autocomplete="off"></label>
+        <label class="field"><span>Editore</span><input name="publisher" autocomplete="off"></label>
+      </div>
+      <div class="form-actions">
+        <button type="button" class="btn ghost" data-close>Annulla</button>
+        <button type="submit" class="btn" id="btnSave">Salva libro</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Dettaglio + segnalibro -->
+  <dialog class="sheet tall" id="dlgBook">
+    <div class="grab"></div>
+    <div class="detail" id="detail"></div>
+  </dialog>
+
+  <!-- Esporta PDF -->
+  <dialog class="sheet" id="dlgExport">
+    <div class="grab"></div>
+    <h2>Esporta l'elenco in PDF</h2>
+    <div class="field">
+      <span>Raggruppa per</span>
+      <div class="seg" id="expGroup" role="radiogroup">
+        <button type="button" role="radio" data-g="genre" aria-checked="true">Genere</button>
+        <button type="button" role="radio" data-g="author" aria-checked="false">Autore</button>
+        <button type="button" role="radio" data-g="year" aria-checked="false">Anno</button>
+        <button type="button" role="radio" data-g="status" aria-checked="false">Lettura</button>
+      </div>
+    </div>
+    <label class="switch"><input type="checkbox" id="expCovers" checked><span>Includi le miniature delle copertine</span></label>
+    <label class="switch"><input type="checkbox" id="expFiltered"><span>Solo i libri della ricerca attuale</span></label>
+    <div class="form-actions">
+      <button type="button" class="btn ghost" data-close>Annulla</button>
+      <button type="button" class="btn" id="btnMakePdf">Crea PDF</button>
+    </div>
+  </dialog>
+
+  <!-- Impostazioni -->
+  <dialog class="sheet tall" id="dlgSettings">
+    <div class="grab"></div>
+    <h2>Impostazioni</h2>
+    <section class="set">
+      <h3>Lettura del testo offline</h3>
+      <p class="hint" id="ocrStatus">Controllo in corso…</p>
+      <div class="progress" id="ocrProgress" hidden><i></i></div>
+      <button class="btn small" id="btnOcrDownload" hidden>Scarica ora (circa 12 MB)</button>
+      <button class="btn ghost small" id="btnOcrRemove" hidden>Rimuovi</button>
+    </section>
+    <section class="set">
+      <h3>Aspetto</h3>
+      <div class="seg" id="themeSeg" role="radiogroup">
+        <button role="radio" data-t="auto" aria-checked="true">Automatico</button>
+        <button role="radio" data-t="light" aria-checked="false">Chiaro</button>
+        <button role="radio" data-t="dark" aria-checked="false">Scuro</button>
+      </div>
+    </section>
+    <section class="set">
+      <h3>Copia di sicurezza</h3>
+      <p class="hint">I libri sono salvati solo su questo telefono. Ogni tanto fai una copia: ti serve se cambi telefono o cancelli i dati del browser.</p>
+      <div class="row-btns">
+        <button class="btn small" id="btnBackup">Salva copia</button>
+        <button class="btn ghost small" id="btnRestore">Ripristina copia</button>
+      </div>
+      <input type="file" id="restoreInput" accept="application/json,.json" hidden>
+      <p class="hint" id="storageInfo"></p>
+    </section>
+    <p class="hint version" id="version"></p>
+    <button class="btn ghost wide" data-close>Chiudi</button>
+  </dialog>
+
+  <script src="vendor/pdf-lib.min.js" defer></script>
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
