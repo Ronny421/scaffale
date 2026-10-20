@@ -1,14 +1,14 @@
 import { db, newId } from './db.js';
 import {
   GENRES, genreColor, hash, buildAuthorResolver, similarAuthor, cleanIsbn, isValidIsbn,
-  extractFromText, lookupIsbn, searchByText, fetchCover, getGoogleKey, setGoogleKey, describeStatus,
+  extractFromText, lookupIsbn, searchByText, fetchCover, getGoogleKey, setGoogleKey, statusReport,
   getStoredGoogleKey, BUILTIN_GOOGLE_KEY,
 } from './catalog.js';
 import { barcodeSupported, scanIsbn } from './scanner.js';
 import { ocrReady, downloadOcr, removeOcr, recognize } from './ocr.js';
 import { buildPdf } from './pdf.js';
 
-const VERSION = '1.2.0';
+const VERSION = '1.3.0';
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -22,17 +22,23 @@ const state = {
 
 // ---------------------------------------------------------------- utilità
 const LOOKUP_MSG = {
-  quota: 'Google Books ha esaurito per oggi il limite di ricerche condiviso, e gli altri archivi non hanno questo libro. Salvalo pure anche senza titolo: completerai i dati con «Completa ora». Con una chiave personale gratuita il problema sparisce.',
-  badkey: 'La chiave Google Books inserita nelle Impostazioni non è valida o non è autorizzata per questo sito: controllala.',
-  unreachable: 'Gli archivi online non rispondono in questo momento. Salvalo pure anche senza titolo: completerai i dati più tardi con «Completa ora».',
+  quota: 'Google Books ha esaurito il limite di ricerche, e gli altri archivi non hanno questo libro. Salvalo pure anche senza titolo: completerai i dati con «Completa ora».',
+  badkey: 'Google Books rifiuta la chiave{d}. Apri le Impostazioni e premi «Verifica gli archivi».',
+  blocked: 'Google Books risponde, ma il telefono non riesce a leggere la risposta: di solito dipende dalla configurazione della chiave. Apri le Impostazioni e premi «Verifica gli archivi».',
+  error: 'Google Books ha risposto con un errore{d}, e gli altri archivi non hanno questo libro.',
+  unreachable: 'Il telefono non riesce a contattare Google Books, e gli altri archivi non hanno questo libro. Salvalo pure anche senza titolo: completerai i dati più tardi con «Completa ora».',
+  offline: 'Il telefono non raggiunge nessun archivio: controlla la connessione. Salvalo pure anche senza titolo: completerai i dati più tardi con «Completa ora».',
   notfound: 'Questo ISBN non compare negli archivi online. Fotografa la copertina per leggere titolo e autore, oppure compila a mano.',
 };
-function showLookupHint(outcome) {
+function lookupMessage(outcome, detail) {
+  return (LOOKUP_MSG[outcome] || LOOKUP_MSG.notfound).replace('{d}', detail ? ` («${detail}»)` : '');
+}
+function showLookupHint(outcome, detail) {
   const h = $('#formHint');
-  h.textContent = LOOKUP_MSG[outcome];
+  h.textContent = lookupMessage(outcome, detail);
   if (outcome === 'notfound') return;
-  const keyBtn = (outcome === 'quota' || outcome === 'badkey')
-    ? '<button type="button" class="btn ghost small" data-act="key">Imposta la chiave</button>' : '';
+  const keyBtn = ['quota', 'badkey', 'blocked', 'error'].includes(outcome)
+    ? '<button type="button" class="btn ghost small" data-act="key">Controlla la chiave</button>' : '';
   h.insertAdjacentHTML('beforeend',
     `<span class="hint-actions">${keyBtn}<button type="button" class="btn small" data-act="retry">Riprova la ricerca</button></span>`);
 }
@@ -563,9 +569,9 @@ async function runOcr(file) {
       form.elements.isbn.value = found.isbn;
       toast(`Trovato l'ISBN ${found.isbn}`);
       if (navigator.onLine) {
-        const { book, outcome } = await lookupIsbn(found.isbn);
+        const { book, outcome, detail } = await lookupIsbn(found.isbn);
         if (book) { fillForm(book, { overwrite: false }); await maybeCover(book.coverUrls); }
-        else if (outcome !== 'notfound') { formCtx.needsLookup = true; toast(LOOKUP_MSG[outcome], 7000); }
+        else if (outcome !== 'notfound') { formCtx.needsLookup = true; toast(lookupMessage(outcome, detail), 7000); }
       } else formCtx.needsLookup = true;
     }
   } catch (err) {
@@ -598,9 +604,9 @@ $('#btnSearchOnline').addEventListener('click', async () => {
   if (!t && !a) { toast('Scegli prima almeno il titolo'); return; }
   const box = $('#candidates');
   box.innerHTML = '<p class="hint"><span class="spinner"></span> Cerco…</p>';
-  const { results: res, outcome } = await searchByText(t, a);
+  const { results: res, outcome, detail } = await searchByText(t, a);
   if (!res.length) {
-    box.innerHTML = `<p class="hint">${outcome === 'notfound' ? 'Nessun risultato. Prova a correggere il titolo.' : esc(LOOKUP_MSG[outcome])}</p>`;
+    box.innerHTML = `<p class="hint">${outcome === 'notfound' ? 'Nessun risultato. Prova a correggere il titolo.' : esc(lookupMessage(outcome, detail))}</p>`;
     return;
   }
   box._res = res;
@@ -671,11 +677,11 @@ async function handleIsbn(isbn) {
     return;
   }
   toast('Cerco il libro…', 15000);
-  const { book, outcome } = await lookupIsbn(isbn);
+  const { book, outcome, detail } = await lookupIsbn(isbn);
   if (!book) {
     $('#toast').classList.remove('show');
     openForm({ isbn }, { needsLookup: outcome !== 'notfound' });
-    showLookupHint(outcome);
+    showLookupHint(outcome, detail);
     return;
   }
   let cover = null;
@@ -715,10 +721,13 @@ $('#btnComplete').addEventListener('click', async () => {
   const parts = [`${ok} su ${pending.length} libri completati`];
   if (missing) parts.push(`${missing} non presenti negli archivi: completali a mano`);
   if (problem) parts.push({
-    quota: 'Google Books ha il limite esaurito: riprova più tardi o aggiungi una chiave',
-    badkey: 'controlla la chiave Google Books nelle Impostazioni',
-    unreachable: 'archivi non raggiungibili, riprova più tardi',
-  }[problem]);
+    quota: 'Google Books ha il limite esaurito: riprova più tardi',
+    badkey: 'Google rifiuta la chiave: premi «Verifica gli archivi» nelle Impostazioni',
+    blocked: 'Google non risponde in modo leggibile: premi «Verifica gli archivi» nelle Impostazioni',
+    error: 'Google Books ha risposto con un errore, riprova più tardi',
+    unreachable: 'Google Books non raggiungibile, riprova più tardi',
+    offline: 'archivi non raggiungibili: controlla la connessione',
+  }[problem] || 'riprova più tardi');
   toast(parts.join('. '), 6000);
 });
 
@@ -800,14 +809,14 @@ $('#formHint').addEventListener('click', async e => {
   const isbn = cleanIsbn(form.elements.isbn.value);
   if (!isValidIsbn(isbn)) { toast('Serve un ISBN valido nel campo ISBN'); return; }
   b.disabled = true; b.innerHTML = '<span class="spinner"></span> Cerco…';
-  const { book, outcome } = await lookupIsbn(isbn);
+  const { book, outcome, detail } = await lookupIsbn(isbn);
   if (book) {
     fillForm(book, { overwrite: false });
     formCtx.needsLookup = false;
     $('#formHint').textContent = 'Dati trovati: controlla e salva.';
     await maybeCover(book.coverUrls);
   } else {
-    showLookupHint(outcome);
+    showLookupHint(outcome, detail);
   }
 });
 
@@ -818,19 +827,31 @@ async function runLookupTest() {
   const box = $('#lookupStatus');
   if (!navigator.onLine) { box.innerHTML = '<p class="verdict">Sei offline: collegati a internet per verificare.</p>'; return; }
   box.innerHTML = '<p class="verdict"><span class="spinner"></span> Interrogo gli archivi…</p>';
-  const { status } = await lookupIsbn(TEST_ISBN);
-  const lines = describeStatus(status);
-  const cls = v => (v === 'ok' || v === 'empty') ? '' : v === 'quota' ? 'warn' : 'bad';
-  let verdict;
+  const key = getGoogleKey();
   const whose = getStoredGoogleKey() ? 'la tua chiave' : 'la chiave integrata';
-  if (status.google === 'ok') verdict = getGoogleKey() ? `Tutto a posto: ${whose} funziona.` : 'Tutto a posto per ora.';
-  else if (status.google === 'quota') verdict = getGoogleKey()
-    ? `Hai esaurito le ricerche di oggi con ${whose}: si azzerano ogni giorno.`
-    : 'Google Books rifiuta le ricerche senza chiave: è il limite condiviso. Aggiungi una chiave personale qui sopra.';
-  else if (status.google === 'badkey') verdict = 'Google rifiuta la chiave: controlla di averla copiata intera, che la Books API sia abilitata e che la restrizione del sito sia https://ronny421.github.io/*';
-  else verdict = 'Google Books non risponde: controlla la connessione e riprova.';
-  box.innerHTML = Object.values(status).map((v, i) => `<div class="src ${cls(v)}"><i></i>${esc(lines[i])}</div>`).join('') +
-    `<p class="verdict">${esc(verdict)}</p>`;
+  const keyLine = key
+    ? `Chiave in uso: ${key.slice(0, 4)}…${key.slice(-4)}, ${getStoredGoogleKey() ? 'salvata su questo telefono' : "integrata nell'app"}.`
+    : 'Nessuna chiave in uso: Google Books riceve richieste anonime.';
+  const { status, details } = await lookupIsbn(TEST_ISBN);
+  const rows = statusReport(status, details);
+  const cls = k => (k === 'ok' || k === 'empty') ? '' : k === 'quota' ? 'warn' : 'bad';
+  const olWorks = ['ok', 'empty'].includes(status.openlibrary) || ['ok', 'empty'].includes(status.olsearch);
+  const verdicts = {
+    ok: key ? `Tutto a posto: ${whose} funziona.` : 'Tutto a posto per ora.',
+    empty: key ? `Tutto a posto: ${whose} funziona.` : 'Tutto a posto per ora.',
+    quota: key
+      ? `Hai esaurito le ricerche di oggi con ${whose}: si azzerano ogni giorno.`
+      : 'Google Books rifiuta le richieste anonime: è il limite condiviso. Salva la tua chiave qui sopra.',
+    badkey: 'Google rifiuta la chiave: il motivo è nel suo messaggio qui sopra. Controlla nella console che la Books API sia abilitata nello stesso progetto della chiave, e che la restrizione del sito sia https://ronny421.github.io/* . Dopo ogni modifica aspetta qualche minuto.',
+    blocked: 'Google risponde, ma il browser non può leggere la risposta. Prova a togliere per qualche minuto le restrizioni della chiave: se così funziona, il problema è lì.',
+    error: 'Google risponde con un errore: il motivo è nel messaggio qui sopra.',
+    unreachable: olWorks
+      ? 'Internet funziona, ma il telefono non riesce a contattare Google. Succede con alcuni blocchi pubblicitari, o con il «DNS privato» nelle impostazioni di rete di Android.'
+      : 'Il telefono non raggiunge gli archivi: controlla la connessione.',
+  };
+  box.innerHTML = `<p class="verdict">${esc(keyLine)}</p>` +
+    rows.map(r => `<div class="src ${cls(r.kind)}"><i></i><span>${esc(r.text)}${r.detail ? `<small>${esc(r.detail)}</small>` : ''}</span></div>`).join('') +
+    `<p class="verdict">${esc(verdicts[status.google] || '')}</p>`;
 }
 
 $('#btnLookupTest').addEventListener('click', runLookupTest);
@@ -846,8 +867,14 @@ $('#btnKeyPaste').addEventListener('click', async () => {
   }
 });
 $('#btnKeySave').addEventListener('click', async () => {
-  const k = $('#gbKey').value.trim();
-  if (k && !/^[A-Za-z0-9_\-]{30,60}$/.test(k)) { toast('La chiave sembra incompleta: copiala di nuovo'); return; }
+  const raw = $('#gbKey').value.trim();
+  const m = raw.match(/AIza[0-9A-Za-z_\-]{35}/);
+  const k = m ? m[0] : raw;
+  if (k && !/^AIza[0-9A-Za-z_\-]{30,56}$/.test(k)) {
+    $('#lookupStatus').innerHTML = '<p class="verdict">Chiave non salvata: deve iniziare con AIza ed essere lunga 39 caratteri, senza spazi. Copiala di nuovo dalla console di Google.</p>';
+    return;
+  }
+  $('#gbKey').value = k;
   setGoogleKey(k);
   toast(k ? 'Chiave salvata su questo telefono' : 'Chiave rimossa');
   runLookupTest();

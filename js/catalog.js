@@ -214,12 +214,27 @@ export function setGoogleKey(k) {
 class HttpError extends Error {
   constructor(status, body) { super('HTTP ' + status); this.status = status; this.body = body; }
 }
+// Il server ha risposto, ma senza il permesso CORS: il browser non lascia leggere la risposta
+class BlockedError extends Error {
+  constructor() { super('Risposta non leggibile'); this.name = 'BlockedError'; }
+}
 
 async function fetchJson(url, ms = 12000) {
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), ms);
+  let r;
   try {
-    const r = await fetch(url, { signal: ctrl.signal });
+    r = await fetch(url, { signal: ctrl.signal });
+  } catch (err) {
+    clearTimeout(t);
+    if (err.name === 'AbortError') throw err;
+    // "Failed to fetch" ha due cause possibili: rete assente, oppure risposta arrivata
+    // ma bloccata dal browser (CORS). Una richiesta "no-cors" le distingue: riceve una
+    // risposta opaca se il server ha risposto, e fallisce solo se non risponde nessuno.
+    if (await serverAnswers(url)) throw new BlockedError();
+    throw err;
+  }
+  try {
     if (!r.ok) {
       let body = null;
       try { body = await r.json(); } catch (e) { /* corpo non JSON */ }
@@ -229,28 +244,60 @@ async function fetchJson(url, ms = 12000) {
   } finally { clearTimeout(t); }
 }
 
-// Esiti possibili di ogni archivio:
-// ok, empty (risponde ma non ha il libro), quota (limite di richieste esaurito),
-// badkey (chiave Google non valida o non autorizzata), error (rete, timeout, server giù)
+async function serverAnswers(url) {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), 8000);
+  try {
+    await fetch(url, { mode: 'no-cors', cache: 'no-store', signal: ctrl.signal });
+    return true;
+  } catch (e) {
+    return false;
+  } finally { clearTimeout(t); }
+}
+
+// Esito di ogni archivio:
+//   ok / empty   risponde (con o senza il libro)
+//   quota        limite di richieste esaurito (429, oppure 403 "Daily Limit…")
+//   badkey       Google rifiuta la chiave o la configurazione del progetto
+//   blocked      risponde, ma il browser non può leggere la risposta
+//   unreachable  nessuna risposta (rete, DNS, tempo scaduto)
+//   error        qualunque altro errore
+// Restituisce { kind, detail }: detail è il messaggio originale del server, se c'è.
 function classify(err, usedKey) {
   if (err instanceof HttpError) {
-    const body = JSON.stringify(err.body || '');
-    if (err.status === 429 || /RESOURCE_EXHAUSTED|rateLimitExceeded|quota/i.test(body)) return 'quota';
-    if (usedKey && (err.status === 400 || err.status === 403)) return 'badkey';
+    const e = (err.body && err.body.error) || {};
+    const text = JSON.stringify(err.body || '');
+    const detail = (typeof e === 'object' && e.message) ? e.message : `errore HTTP ${err.status}`;
+    if (err.status === 429 || /RESOURCE_EXHAUSTED|rateLimitExceeded|dailyLimitExceeded|quotaExceeded|quota|Daily Limit/i.test(text)) {
+      return { kind: 'quota', detail };
+    }
+    if (/API_KEY|API key|keyInvalid|referer|referrer|SERVICE_DISABLED|has not been used|is disabled/i.test(text)) {
+      return { kind: 'badkey', detail };
+    }
+    if (usedKey && (err.status === 400 || err.status === 403)) return { kind: 'badkey', detail };
+    return { kind: 'error', detail };
   }
-  return 'error';
+  if (err instanceof BlockedError) return { kind: 'blocked', detail: '' };
+  if (err && err.name === 'AbortError') return { kind: 'unreachable', detail: 'nessuna risposta entro 12 secondi' };
+  return { kind: 'unreachable', detail: '' };
 }
 
 const STATUS_TEXT = {
   ok: 'funziona',
   empty: 'funziona',
   quota: 'limite di richieste esaurito',
-  badkey: 'chiave non valida o non autorizzata per questo sito',
-  error: 'non raggiungibile',
+  badkey: 'rifiuta la chiave',
+  blocked: 'risponde, ma il browser non può leggere la risposta',
+  unreachable: 'non raggiungibile',
+  error: 'risponde con un errore',
 };
-export function describeStatus(status) {
-  const names = { google: 'Google Books', openlibrary: 'Open Library', olsearch: 'Open Library (ricerca)' };
-  return Object.entries(status).map(([k, v]) => `${names[k]}: ${STATUS_TEXT[v]}`);
+const SOURCE_NAMES = { google: 'Google Books', openlibrary: 'Open Library', olsearch: 'Open Library (ricerca)' };
+export function statusReport(status, details = {}) {
+  return Object.entries(status).map(([k, v]) => ({
+    kind: v,
+    text: `${SOURCE_NAMES[k]}: ${STATUS_TEXT[v]}`,
+    detail: (v === 'ok' || v === 'empty') ? '' : (details[k] || ''),
+  }));
 }
 
 function googleUrl(query, extra = '') {
@@ -324,8 +371,8 @@ function merge(base, extra) {
   return base;
 }
 
-// Restituisce { book, outcome, status }
-// outcome: found | notfound | quota | badkey | unreachable
+// Restituisce { book, outcome, status, details, detail }
+// outcome: found | notfound | quota | badkey | blocked | error | unreachable | offline
 export async function lookupIsbn(raw) {
   const isbn = cleanIsbn(raw);
   const usedKey = !!getGoogleKey();
@@ -335,7 +382,7 @@ export async function lookupIsbn(raw) {
     ['olsearch', openLibrarySearchByIsbn(isbn)],
   ];
   const settled = await Promise.allSettled(sources.map(s => s[1]));
-  const status = {};
+  const status = {}, details = {};
   let book = null;
   settled.forEach((res, i) => {
     const name = sources[i][0];
@@ -343,7 +390,9 @@ export async function lookupIsbn(raw) {
       status[name] = res.value ? 'ok' : 'empty';
       if (res.value) book = merge(book, res.value);
     } else {
-      status[name] = classify(res.reason, name === 'google' && usedKey);
+      const c = classify(res.reason, name === 'google' && usedKey);
+      status[name] = c.kind;
+      details[name] = c.detail;
     }
   });
   if (book) {
@@ -351,29 +400,29 @@ export async function lookupIsbn(raw) {
     // La copertina di Open Library per ISBN è la più affidabile da scaricare
     book.coverUrls.unshift(`https://covers.openlibrary.org/b/isbn/${isbn}-L.jpg?default=false`);
     book.coverUrl = book.coverUrls.find(u => !u.includes('default=false')) || '';
-    return { book, outcome: 'found', status };
+    return { book, outcome: 'found', status, details };
   }
+  const g = status.google;
   let outcome = 'notfound';
-  if (status.google === 'quota') outcome = 'quota';
-  else if (status.google === 'badkey') outcome = 'badkey';
-  else if (Object.values(status).every(s => s === 'error')) outcome = 'unreachable';
-  else if (status.google === 'error') outcome = 'unreachable';
-  return { book: null, outcome, status };
+  if (['quota', 'badkey', 'blocked', 'error'].includes(g)) outcome = g;
+  else if (g === 'unreachable') outcome = Object.values(status).every(v => v === 'unreachable') ? 'offline' : 'unreachable';
+  return { book: null, outcome, status, details, detail: details.google || '' };
 }
 
-// Ricerca per titolo/autore: Google Books, e Open Library se Google non risponde
-// Restituisce { results, outcome }
+// Ricerca per titolo/autore: Google Books, e Open Library se Google non trova o non risponde
+// Restituisce { results, outcome, detail }
 export async function searchByText(title, author) {
   const q = [title && `intitle:${title}`, author && `inauthor:${author}`].filter(Boolean).join('+');
   if (!q) return { results: [], outcome: 'notfound' };
-  let googleOutcome = 'notfound';
+  let google = { kind: 'empty', detail: '' };
   try {
     const g = await fetchJson(googleUrl(encodeURIComponent(q), '&maxResults=6'));
     const results = (g.items || []).map(fromGoogle);
     if (results.length) return { results, outcome: 'found' };
   } catch (e) {
-    googleOutcome = classify(e, !!getGoogleKey());
+    google = classify(e, !!getGoogleKey());
   }
+  let olFailed = false;
   try {
     const p = new URLSearchParams({ limit: '6', fields: OL_FIELDS });
     if (title) p.set('title', title);
@@ -382,10 +431,11 @@ export async function searchByText(title, author) {
     const results = (s.docs || []).map(fromOlDoc);
     if (results.length) return { results, outcome: 'found' };
   } catch (e) {
-    if (googleOutcome !== 'notfound') return { results: [], outcome: googleOutcome === 'error' ? 'unreachable' : googleOutcome };
-    return { results: [], outcome: 'unreachable' };
+    olFailed = true;
   }
-  return { results: [], outcome: googleOutcome === 'notfound' ? 'notfound' : googleOutcome === 'error' ? 'unreachable' : googleOutcome };
+  if (google.kind === 'empty') return { results: [], outcome: 'notfound' };
+  const outcome = google.kind === 'unreachable' ? (olFailed ? 'offline' : 'unreachable') : google.kind;
+  return { results: [], outcome, detail: google.detail };
 }
 
 // Scarica la copertina provando più indirizzi; se nessun server lo consente, pazienza
