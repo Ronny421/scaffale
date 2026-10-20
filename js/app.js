@@ -8,8 +8,10 @@ import { barcodeSupported, scanIsbn } from './scanner.js';
 import { ocrReady, downloadOcr, removeOcr, recognize } from './ocr.js';
 import { buildPdf } from './pdf.js';
 import { Reader } from './reader.js';
+import * as drive from './drive.js';
+import * as sync from './sync.js';
 
-const VERSION = '1.8.0';
+const VERSION = '1.9.0';
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -38,15 +40,24 @@ window.addEventListener('appinstalled', () => {
 // Un'altra finestra con la versione vecchia blocca l'aggiornamento del database
 window.addEventListener('db-blocked', () => toast('Aggiornamento in corso: chiudi le altre finestre di Scaffale aperte', 8000));
 
+// Come chiamare il dispositivo nei messaggi: telefono, tablet o computer
+const DEV = (() => {
+  const ua = navigator.userAgent;
+  if (/iPad|Tablet/i.test(ua) || (/Android/i.test(ua) && !/Mobile/i.test(ua))) return 'tablet';
+  if (/Mobile|Android|iPhone/i.test(ua)) return 'telefono';
+  return 'computer';
+})();
+const DEV_CAP = DEV.charAt(0).toUpperCase() + DEV.slice(1);
+
 // ---------------------------------------------------------------- utilità
 const LOOKUP_MSG = {
   quota: 'Google Books ha esaurito il limite di ricerche, e gli altri archivi non hanno questo libro. Salvalo pure anche senza titolo: completerai i dati con «Completa ora».',
   badkey: 'Google Books rifiuta la chiave{d}. Apri le Impostazioni e premi «Verifica gli archivi».',
-  blocked: 'Google Books risponde, ma il telefono non riesce a leggere la risposta: di solito dipende dalla configurazione della chiave. Apri le Impostazioni e premi «Verifica gli archivi».',
+  blocked: 'Google Books risponde, ma il ' + DEV + ' non riesce a leggere la risposta: di solito dipende dalla configurazione della chiave. Apri le Impostazioni e premi «Verifica gli archivi».',
   error: 'Google Books ha risposto con un errore{d}, e gli altri archivi non hanno questo libro.',
   temporary: 'Google Books ha un guasto temporaneo{d}: non dipende da te né dalla chiave. Ho già riprovato qualche volta; riprova tra poco, oppure salvalo pure anche senza titolo e completalo dopo con «Completa ora».',
-  unreachable: 'Il telefono non riesce a contattare Google Books, e gli altri archivi non hanno questo libro. Salvalo pure anche senza titolo: completerai i dati più tardi con «Completa ora».',
-  offline: 'Il telefono non raggiunge nessun archivio: controlla la connessione. Salvalo pure anche senza titolo: completerai i dati più tardi con «Completa ora».',
+  unreachable: 'Il ' + DEV + ' non riesce a contattare Google Books, e gli altri archivi non hanno questo libro. Salvalo pure anche senza titolo: completerai i dati più tardi con «Completa ora».',
+  offline: 'Il ' + DEV + ' non raggiunge nessun archivio: controlla la connessione. Salvalo pure anche senza titolo: completerai i dati più tardi con «Completa ora».',
   notfound: 'Questo ISBN non compare ancora negli archivi online. Succede soprattutto con i libri appena usciti: gli archivi si aggiornano dopo qualche giorno o settimana. Salvalo pure anche solo con l\'ISBN, Scaffale riproverà da sola ogni giorno. Per avere subito titolo e autore, tocca «Copertina» e fotografala.',
 };
 function lookupMessage(outcome, detail) {
@@ -246,7 +257,7 @@ function rowHtml(b) {
   return `<button class="row" data-id="${b.id}">
     ${url ? `<img class="thumb" src="${url}" alt="" style="--c:${c}">` : `<span class="thumb" style="--c:${c}">${esc(initials(b.title))}</span>`}
     <span><span class="t">${esc(titleOf(b))}</span><span class="a">${esc(b.author || 'Autore sconosciuto')}</span>
-    <span class="meta">${esc([b.year, b.genre, b.file && fileKind(b.file)].filter(Boolean).join(', '))}</span></span>
+    <span class="meta">${esc([b.year, b.genre, fileLabel(b)].filter(Boolean).join(', '))}</span></span>
     ${pct}
   </button>`;
 }
@@ -363,31 +374,166 @@ function formatSize(bytes) {
   if (bytes >= 1048576) return (bytes / 1048576).toLocaleString('it-IT', { maximumFractionDigits: 1 }) + ' MB';
   return Math.max(1, Math.round(bytes / 1024)) + ' KB';
 }
+function fileLabel(b) {
+  const f = b.file || b.cloud;
+  if (!f) return '';
+  if (b.file && b.cloud) return fileKind(f) + ', anche su Drive';
+  return b.cloud ? fileKind(f) + ' su Drive' : fileKind(f);
+}
+const sameFile = (a, c) => a && c && a.size === c.size && a.name === c.name;
+
+// Un solo trasferimento alla volta: { bookId, kind: 'up' | 'down', ctrl, progress }
+let xfer = null;
+
 function digitalHtml(b) {
-  if (!b.file) {
+  const local = !!b.file, cloud = !!b.cloud, driveOn = !!drive.getClientId();
+  if (!local && !cloud) {
     return `<div class="digital">
       <div class="bookmark-head"><svg><use href="#i-file"/></svg><strong>Copia digitale</strong></div>
-      <p class="hint">Allega il PDF o l'EPUB di questo libro: resta salvato solo su questo telefono e si apre anche senza internet.</p>
+      <p class="hint">Allega il PDF o l'EPUB di questo libro: resta salvato su questo ${DEV} e si apre anche senza internet.${driveOn ? ' Poi potrai caricarlo su Google Drive.' : ''}</p>
       <div class="bm-actions"><button class="btn ghost small" id="fAdd">Allega file</button></div>
     </div>`;
   }
+  const f = b.file || b.cloud;
+  const differs = local && cloud && !sameFile(b.file, b.cloud);
+  let where;
+  if (local && cloud) {
+    where = differs
+      ? '<p class="where"><svg><use href="#i-cloud"/></svg>Su Google Drive c\'è una versione diversa da quella di questo ' + DEV + '</p>'
+      : '<p class="where cloud"><span class="both"><svg><use href="#i-phone"/></svg><svg><use href="#i-cloud"/></svg></span>Su questo ' + DEV + ' e su Google Drive</p>';
+  } else if (local) {
+    where = '<p class="where"><svg><use href="#i-phone"/></svg>Solo su questo ' + DEV + '</p>';
+  } else {
+    where = '<p class="where cloud"><svg><use href="#i-cloud"/></svg>Solo su Google Drive: scaricalo per leggerlo anche offline</p>';
+  }
+  const busy = xfer && xfer.bookId === b.id;
+  const primary = [];
+  primary.push(`<button class="btn small" id="fRead"${busy ? ' disabled' : ''}><svg><use href="#i-book"/></svg>${local ? 'Leggi' : 'Scarica e leggi'}</button>`);
+  if (local && !cloud && driveOn) primary.push(`<button class="btn ghost small" id="fUpload"${busy ? ' disabled' : ''}><svg><use href="#i-up"/></svg>Carica su Drive</button>`);
+  if (differs && driveOn) primary.push(`<button class="btn ghost small" id="fUpload"${busy ? ' disabled' : ''}><svg><use href="#i-up"/></svg>Sostituisci su Drive</button>`);
+  if (!local && cloud) primary.push(`<button class="btn ghost small" id="fDownload"${busy ? ' disabled' : ''}><svg><use href="#i-down"/></svg>Scarica sul ${DEV}</button>`);
+  const more = [];
+  if (local) more.push('<button class="btn ghost small" id="fOpen">Apri con…</button>', '<button class="btn ghost small" id="fSave">Salva nei Download</button>');
+  if (local && cloud) more.push('<button class="btn ghost small" id="fFree">Libera spazio sul ' + DEV + '</button>');
+  if (cloud) more.push('<button class="btn danger small" id="fCloudDelete">Elimina da Drive</button>');
+  if (local) more.push(`<button class="btn danger small" id="fRemove">${cloud ? 'Rimuovi dal ' + DEV : 'Rimuovi'}</button>`);
+  more.push('<button class="btn ghost small" id="fAdd">Allega un altro file</button>');
   return `<div class="digital">
-      <div class="bookmark-head"><svg><use href="#i-file"/></svg><strong>Copia digitale</strong><span class="badge">${fileKind(b.file)}</span></div>
-      <p class="file-name">${esc(b.file.name)}<small>${formatSize(b.file.size)}, salvato solo su questo telefono</small></p>
-      <div class="bm-actions">
-        <button class="btn small" id="fRead"><svg><use href="#i-book"/></svg>Leggi</button>
-        <button class="btn ghost small" id="fOpen">Apri con…</button>
-        <button class="btn ghost small" id="fSave">Salva nei Download</button>
-        <button class="btn danger small" id="fRemove">Rimuovi</button>
-      </div>
+      <div class="bookmark-head"><svg><use href="#i-file"/></svg><strong>Copia digitale</strong><span class="badge">${fileKind(f)}</span></div>
+      <p class="file-name">${esc(f.name)}<small>${formatSize(f.size)}</small></p>
+      ${where}
+      ${busy ? `<div class="xfer"><div class="progress"><i style="width:${Math.round(xfer.progress * 100)}%"></i></div>
+        <div class="xfer-row"><span id="xferText">${xfer.kind === 'up' ? 'Carico su Google Drive' : 'Scarico da Google Drive'}… ${Math.round(xfer.progress * 100)}%</span>
+        <button class="btn ghost small" id="fCancel">Annulla</button></div></div>` : ''}
+      <div class="bm-actions">${primary.join('')}</div>
+      ${busy ? '' : `<details class="more"><summary>Altre azioni</summary><div class="bm-actions">${more.join('')}</div></details>`}
     </div>`;
+}
+
+function driveMessage(err) {
+  if (!err) return 'Operazione non riuscita';
+  if (err.reason === 'login') return 'Serve di nuovo l\'accesso a Google: tocca di nuovo il pulsante';
+  if (err.reason === 'noclient') return 'Prima collega Google Drive nelle Impostazioni';
+  return err.message || 'Operazione su Google Drive non riuscita';
+}
+
+// Da chiamare dentro un tocco: se serve, apre la finestra di Google
+async function ensureDrive() {
+  if (!drive.getClientId()) {
+    toast('Prima collega Google Drive nelle Impostazioni');
+    openSettings('drive');
+    return false;
+  }
+  try {
+    const wasOn = drive.isEnabled();
+    if (!wasOn) { await drive.signIn(); refreshDriveSection(); }
+    else await drive.ensureToken(true);
+    return true;
+  } catch (err) {
+    toast(driveMessage(err), 6000);
+    return false;
+  }
+}
+
+function startXfer(b, kind) {
+  xfer = { bookId: b.id, kind, ctrl: new AbortController(), progress: 0 };
+  if ($('#dlgBook').open && currentId === b.id) renderDetail(b);
+  return xfer;
+}
+function xferProgress(p) {
+  if (!xfer) return;
+  xfer.progress = p;
+  const bar = $('.xfer .progress i'), txt = $('#xferText');
+  if (bar) bar.style.width = Math.round(p * 100) + '%';
+  if (txt) txt.textContent = `${xfer.kind === 'up' ? 'Carico su Google Drive' : 'Scarico da Google Drive'}… ${Math.round(p * 100)}%`;
+}
+function endXfer() {
+  const id = xfer && xfer.bookId;
+  xfer = null;
+  const b = state.books.find(x => x.id === id);
+  if (b && $('#dlgBook').open && currentId === id) renderDetail(b);
+}
+
+async function uploadToDrive(b) {
+  if (xfer) { toast('Aspetta che finisca il trasferimento in corso'); return; }
+  if (!(await ensureDrive())) return;
+  const rec = await db.files.get(b.id);
+  if (!rec) { delete b.file; await db.put(b); renderDetail(b); toast('Il file non è su questo ' + DEV); return; }
+  const x = startXfer(b, 'up');
+  try {
+    const res = await drive.uploadBook({ blob: rec.blob, name: rec.name, mimeType: rec.type, onProgress: xferProgress, signal: x.ctrl.signal });
+    const old = b.cloud && b.cloud.id;
+    b.cloud = { id: res.id, name: rec.name, type: rec.type, size: rec.size };
+    b.editedAt = Date.now();
+    await db.put(b);
+    if (old && old !== res.id) sync.queueTrash(old); // la versione precedente va nel cestino di Drive
+    toast('Caricato su Google Drive');
+    sync.schedule(1000);
+  } catch (err) {
+    if (err.reason !== 'aborted') toast(driveMessage(err), 6000);
+  } finally {
+    endXfer(); render();
+  }
+}
+
+// Scarica la copia di Drive sul telefono; restituisce true se ci è riuscito
+async function downloadFromDrive(b) {
+  if (xfer) { toast('Aspetta che finisca il trasferimento in corso'); return false; }
+  if (!b.cloud) return false;
+  if (!(await ensureDrive())) return false;
+  if (navigator.storage && navigator.storage.estimate && b.cloud.size) {
+    const { usage = 0, quota = 0 } = await navigator.storage.estimate();
+    if (quota && quota - usage < b.cloud.size * 1.1) { toast('Spazio insufficiente sul ' + DEV + ' per questo file'); return false; }
+  }
+  const x = startXfer(b, 'down');
+  try {
+    const blob = await drive.downloadBook(b.cloud.id, { onProgress: xferProgress, signal: x.ctrl.signal });
+    const type = b.cloud.type || blob.type;
+    await db.files.put({ bookId: b.id, name: b.cloud.name, type, size: blob.size, blob: new Blob([blob], { type }), addedAt: Date.now() });
+    b.file = { name: b.cloud.name, type, size: blob.size };
+    await db.put(b);
+    requestPersistence();
+    toast('Scaricato sul ' + DEV);
+    return true;
+  } catch (err) {
+    if (err.reason === 'notFound') {
+      // Il file è stato eliminato da Drive direttamente: tolgo il riferimento
+      delete b.cloud; b.editedAt = Date.now(); await db.put(b);
+      toast('Il file non è più su Google Drive', 6000);
+    } else if (err.reason !== 'aborted') {
+      toast(driveMessage(err), 6000);
+    }
+    return false;
+  } finally {
+    endXfer(); render();
+  }
 }
 
 async function openBookFile(b, how) {
   const rec = await db.files.get(b.id);
   if (!rec) {
     delete b.file; await db.put(b); renderDetail(b);
-    toast('Il file non è su questo telefono: allegalo di nuovo');
+    toast(b.cloud ? 'Il file è su Google Drive: scaricalo sul ' + DEV : 'Il file non è su questo ' + DEV + ': allegalo di nuovo');
     return;
   }
   const file = new File([rec.blob], rec.name, { type: rec.type });
@@ -416,7 +562,7 @@ $('#bookFileInput').addEventListener('change', async e => {
   // Il browser concede a ogni sito una parte del disco del telefono: controllo che basti
   if (navigator.storage && navigator.storage.estimate) {
     const { usage = 0, quota = 0 } = await navigator.storage.estimate();
-    if (quota && quota - usage < f.size * 1.1) { toast('Spazio insufficiente sul telefono per questo file'); return; }
+    if (quota && quota - usage < f.size * 1.1) { toast('Spazio insufficiente sul ' + DEV + ' per questo file'); return; }
   }
   toast('Salvo il file…', 15000);
   try {
@@ -431,7 +577,7 @@ $('#bookFileInput').addEventListener('change', async e => {
   await db.put(b);
   requestPersistence();
   renderDetail(b);
-  toast('File salvato solo su questo telefono');
+  toast(b.cloud && !sameFile(b.file, b.cloud) ? 'File salvato: su Drive resta la versione precedente' : 'File salvato su questo ' + DEV);
 });
 
 // ------------------------------------------------------------ lettore integrato
@@ -455,10 +601,14 @@ function readerColors() {
 }
 
 async function openReaderFor(b) {
-  const rec = await db.files.get(b.id);
+  let rec = await db.files.get(b.id);
+  if (!rec && b.cloud) {
+    if (!(await downloadFromDrive(b))) return;
+    rec = await db.files.get(b.id);
+  }
   if (!rec) {
     delete b.file; await db.put(b); renderDetail(b);
-    toast('Il file non è su questo telefono: allegalo di nuovo');
+    toast('Il file non è su questo ' + DEV + ': allegalo di nuovo');
     return;
   }
   const kind = fileKind(rec);
@@ -490,7 +640,7 @@ function readerProgress(p) {
   const b = state.books.find(x => x.id === readingId);
   if (!b) return '';
   // Se lo scaffale non conosce le pagine: quelle del PDF, o una stima per l'EPUB
-  if (!b.pages) { b.pages = p.units; b.pagesEstimated = p.kind === 'epub'; }
+  if (!b.pages) { b.pages = p.units; b.pagesEstimated = p.kind === 'epub'; b.editedAt = Date.now(); }
   // Le pagine del file possono essere diverse da quelle dell'edizione: le converto in proporzione
   const page = p.kind === 'pdf' && b.pages === p.units ? p.page : Math.max(1, Math.round(p.fraction * b.pages));
   b.currentPage = Math.min(page, b.pages);
@@ -514,6 +664,7 @@ $('#dlgReader').addEventListener('sheetclosed', async () => {
   getReader().close();
   if (b && $('#dlgBook').open && currentId === b.id) renderDetail(b);
   render();
+  sync.schedule(1500); // il segnalibro arriva subito sugli altri dispositivi
 });
 
 function setPage(v) {
@@ -553,6 +704,29 @@ $('#dlgBook').addEventListener('click', async e => {
     closeSheet($('#dlgBook')); render(); return;
   }
   if (e.target.closest('#fAdd')) { $('#bookFileInput').click(); return; }
+  if (e.target.closest('#fUpload')) { uploadToDrive(b); return; }
+  if (e.target.closest('#fDownload')) { downloadFromDrive(b).then(ok => ok && renderDetail(b)); return; }
+  if (e.target.closest('#fCancel')) { if (xfer) xfer.ctrl.abort(); return; }
+  if (e.target.closest('#fFree')) {
+    await db.files.remove(b.id);
+    delete b.file;
+    await db.put(b);
+    renderDetail(b); render();
+    toast('Spazio liberato: il libro resta su Google Drive');
+    return;
+  }
+  if (e.target.closest('#fCloudDelete')) {
+    const only = !b.file;
+    if (!confirm(`Spostare «${b.cloud.name}» nel cestino di Google Drive?${only ? ` Non è salvato su questo ${DEV}: il libro resterà senza copia digitale.` : ` Resta la copia su questo ${DEV}.`}`)) return;
+    sync.queueTrash(b.cloud.id);
+    delete b.cloud;
+    b.editedAt = Date.now();
+    await db.put(b);
+    renderDetail(b); render();
+    toast('Spostato nel cestino di Google Drive');
+    sync.schedule(1000);
+    return;
+  }
   if (e.target.closest('#fRead')) { openReaderFor(b); return; }
   if (e.target.closest('#fOpen')) { openBookFile(b, 'share'); return; }
   if (e.target.closest('#fSave')) { openBookFile(b, 'download'); return; }
@@ -571,7 +745,13 @@ $('#dlgBook').addEventListener('click', async e => {
     return;
   }
   if (e.target.closest('#dDelete')) {
-    if (!confirm(`Eliminare «${titleOf(b)}» dallo scaffale?${b.file ? ' Verrà eliminata anche la sua copia digitale.' : ''}`)) return;
+    const synced = drive.isEnabled();
+    const parts = [`Eliminare «${titleOf(b)}» dallo scaffale${synced ? ' su tutti i dispositivi collegati' : ''}?`];
+    if (b.file) parts.push('Verrà eliminata anche la copia digitale su questo ' + DEV + '.');
+    if (b.cloud) parts.push('La copia su Google Drive andrà nel cestino di Drive.');
+    if (!confirm(parts.join(' '))) return;
+    if (b.cloud) sync.queueTrash(b.cloud.id);
+    sync.recordDeletion(b.id);
     await db.remove(b.id);
     closeSheet($('#dlgBook'));
     await reload();
@@ -702,7 +882,11 @@ form.addEventListener('submit', async e => {
     publisher: f.publisher.value.trim(),
     needsLookup: formCtx.needsLookup && !!isbn,
   };
-  if (formCtx.coverChanged) { book.cover = formCtx.cover; book.coverStamp = Date.now(); }
+  book.editedAt = Date.now();
+  if (formCtx.coverChanged) {
+    book.cover = formCtx.cover; book.coverStamp = Date.now();
+    book.coverRev = book.coverLocalRev = book.cover ? Date.now() : undefined;
+  }
   if (book.pages && book.currentPage > book.pages) book.currentPage = book.pages;
   if (book.pagesEstimated && formCtx.existing && book.pages !== formCtx.existing.pages) book.pagesEstimated = false;
   await db.put(book);
@@ -973,10 +1157,11 @@ async function completePending({ manual = false } = {}) {
       b.lastLookupAt = Date.now();
       if (d) {
         for (const k of ['title', 'author', 'year', 'pages', 'publisher', 'genre']) if (!b[k] && d[k]) b[k] = d[k];
+      b.editedAt = Date.now();
         if (!b.cover) {
           const blob = await fetchCover(d.coverUrls);
           const small = blob && await normalizeCoverBlob(blob);
-          if (small) { b.cover = small; b.coverStamp = Date.now(); }
+          if (small) { b.cover = small; b.coverStamp = Date.now(); b.coverRev = b.coverLocalRev = Date.now(); }
         }
         b.needsLookup = false;
         b.lookupMisses = 0;
@@ -1084,15 +1269,21 @@ $('#dlgExport').addEventListener('click', async e => {
 // ------------------------------------------------------------ impostazioni
 $('#btnSettings').addEventListener('click', () => openSettings(false));
 
-async function openSettings(focusKey) {
+async function openSettings(focus) {
+  const focusKey = focus === true || focus === 'key';
   openSheet($('#dlgSettings'));
   $('#version').textContent = `Scaffale ${VERSION}`;
   $('#gbKey').value = getStoredGoogleKey();
   $('#gbKey').placeholder = BUILTIN_GOOGLE_KEY ? "Usa la chiave integrata nell'app" : 'AIza…';
   $('#lookupStatus').innerHTML = '';
-  $('#keyHow').open = !!focusKey && !getGoogleKey();
+  $('#keyHow').open = focusKey && !getGoogleKey();
   refreshInviteHint();
+  refreshDriveSection();
   if (focusKey) $('#keySection').scrollIntoView({ block: 'start' });
+  if (focus === 'drive') {
+    $('#driveHow').open = !drive.getClientId();
+    $('#driveSection').scrollIntoView({ block: 'start' });
+  }
   refreshOcrStatus();
   if (navigator.storage && navigator.storage.estimate) {
     const est = await navigator.storage.estimate();
@@ -1130,7 +1321,7 @@ async function runLookupTest() {
   const key = getGoogleKey();
   const whose = getStoredGoogleKey() ? 'la tua chiave' : 'la chiave integrata';
   const keyLine = key
-    ? `Chiave in uso: ${key.slice(0, 4)}…${key.slice(-4)}, ${getStoredGoogleKey() ? 'salvata su questo telefono' : "integrata nell'app"}.`
+    ? `Chiave in uso: ${key.slice(0, 4)}…${key.slice(-4)}, ${getStoredGoogleKey() ? 'salvata su questo ' + DEV : "integrata nell'app"}.`
     : 'Nessuna chiave in uso: Google Books riceve richieste anonime.';
   const { status, details } = await lookupIsbn(TEST_ISBN);
   const rows = statusReport(status, details);
@@ -1147,8 +1338,8 @@ async function runLookupTest() {
     error: 'Google risponde con un errore: il motivo è nel messaggio qui sopra.',
     temporary: 'Google Books ha un guasto temporaneo dei suoi server: non dipende da te né dalla chiave. Riprova tra qualche minuto.',
     unreachable: olWorks
-      ? 'Internet funziona, ma il telefono non riesce a contattare Google. Succede con alcuni blocchi pubblicitari, o con il «DNS privato» nelle impostazioni di rete di Android.'
-      : 'Il telefono non raggiunge gli archivi: controlla la connessione.',
+      ? 'Internet funziona, ma il ' + DEV + ' non riesce a contattare Google. Succede con alcuni blocchi pubblicitari, o con il «DNS privato» nelle impostazioni di rete di Android.'
+      : 'Il ' + DEV + ' non raggiunge gli archivi: controlla la connessione.',
   };
   box.innerHTML = `<p class="verdict">${esc(keyLine)}</p>` +
     rows.map(r => `<div class="src ${cls(r.kind)}"><i></i><span>${esc(r.text)}${r.detail ? `<small>${esc(r.detail)}</small>` : ''}</span></div>`).join('') +
@@ -1178,7 +1369,7 @@ $('#btnKeySave').addEventListener('click', async () => {
   $('#gbKey').value = k;
   setGoogleKey(k);
   refreshInviteHint();
-  toast(k ? 'Chiave salvata su questo telefono' : 'Chiave rimossa');
+  toast(k ? 'Chiave salvata su questo ' + DEV : 'Chiave rimossa');
   runLookupTest();
 });
 
@@ -1243,6 +1434,10 @@ $('#restoreInput').addEventListener('change', async e => {
     const data = JSON.parse(await f.text());
     if (data.app !== 'scaffale' || !Array.isArray(data.books)) throw new Error();
     const books = await Promise.all(data.books.map(async b => ({ ...b, cover: b.cover ? await dataUrlToBlob(b.cover) : null })));
+    for (const b of books) {
+      if (b.cover) b.coverLocalRev = b.coverRev || b.coverStamp || b.addedAt || 1;
+      else { delete b.cover; delete b.coverLocalRev; }
+    }
     // La copia non contiene i file: se sono ancora su questo telefono, li ricollego ai libri
     for (const b of books) {
       const rec = await db.files.get(b.id);
@@ -1257,19 +1452,177 @@ $('#restoreInput').addEventListener('change', async e => {
   } catch (err) { toast('File non valido: scegli una copia creata da Scaffale'); }
 });
 
+// ------------------------------------------------------------ Google Drive
+function timeLabel(at) {
+  if (!at) return '';
+  const d = new Date(at), today = new Date();
+  const hm = d.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
+  return d.toDateString() === today.toDateString() ? `alle ${hm}` : `il ${d.toLocaleDateString('it-IT')} alle ${hm}`;
+}
+
+function refreshDriveSection() {
+  const client = drive.getClientId();
+  $('#driveSetup').hidden = !!client;
+  $('#driveAccount').hidden = !client;
+  $('#clientMsg').textContent = '';
+  if (!client) { $('#driveClient').value = drive.getStoredClientId(); return; }
+  const on = drive.isEnabled();
+  if (!on && navigator.onLine) drive.prepare().catch(() => {}); // pronto per il tocco su «Accedi»
+  const st = sync.status();
+  $('#btnDriveSignIn').hidden = on;
+  $('#btnDriveSync').hidden = !on;
+  $('#btnDriveSignOut').hidden = !on;
+  $('#btnClientChange').hidden = !!drive.BUILTIN_CLIENT_ID && !drive.getStoredClientId();
+  if (!on) {
+    $('#driveStatus').textContent = 'Non collegato';
+    $('#driveNote').textContent = 'Al primo accesso Google potrebbe mostrare l\'avviso «Google non ha verificato questa app»: è normale per le app in prova. Premi «Continua».';
+    return;
+  }
+  $('#driveStatus').textContent = `Collegato come ${drive.accountEmail() || 'account Google'}`;
+  const parts = [];
+  if (st.status === 'syncing') parts.push('Sincronizzazione in corso…');
+  else if (st.status === 'error' || st.status === 'offline') parts.push(`Ultima sincronizzazione non riuscita: ${st.error}`);
+  else if (st.at) parts.push(`Ultima sincronizzazione ${timeLabel(st.at)}.`);
+  if (!drive.hasToken()) parts.push('Il permesso di Google dura circa un\'ora: quando scade, un tocco su «Sincronizza ora» lo rinnova.');
+  $('#driveNote').textContent = parts.join(' ');
+}
+
+function renderSyncChip() {
+  const chip = $('#syncChip');
+  if (!drive.isEnabled()) { chip.hidden = true; return; }
+  const st = sync.status();
+  let mode = st.status, text;
+  if (!drive.hasToken() && mode !== 'syncing') mode = 'login';
+  if (mode === 'syncing') text = 'Sincronizzo con Google Drive…';
+  else if (mode === 'login') text = 'Tocca per sincronizzare con Google Drive';
+  else if (mode === 'error') text = 'Sincronizzazione non riuscita: tocca per riprovare';
+  else if (mode === 'offline') text = 'Senza internet: sincronizzerò più tardi';
+  else text = st.at ? `Sincronizzato ${timeLabel(st.at)}` : 'Collegato a Google Drive';
+  chip.hidden = false;
+  chip.dataset.state = mode;
+  $('#syncText').textContent = text;
+}
+
+// Sincronizzazione chiesta con un tocco: se il permesso è scaduto, la finestra di Google si apre qui
+async function syncByTap() {
+  try {
+    await drive.ensureToken(true);
+  } catch (err) {
+    toast(driveMessage(err), 6000);
+    renderSyncChip();
+    return;
+  }
+  try {
+    await sync.syncNow();
+  } catch (err) {
+    toast(driveMessage(err), 6000);
+  }
+}
+
+$('#syncChip').addEventListener('click', syncByTap);
+$('#btnDriveSync').addEventListener('click', syncByTap);
+
+$('#btnDriveSignIn').addEventListener('click', async () => {
+  try {
+    const email = await drive.signIn();
+    refreshDriveSection(); renderSyncChip(); render();
+    toast(`Collegato${email ? ' come ' + email : ''}: sincronizzo la libreria…`);
+    await sync.syncNow();
+    toast('Libreria sincronizzata con Google Drive');
+  } catch (err) {
+    toast(driveMessage(err), 7000);
+  }
+  refreshDriveSection();
+});
+$('#btnDriveSignOut').addEventListener('click', () => {
+  if (!confirm('Scollegare Scaffale da Google Drive su questo dispositivo? I libri restano qui e su Drive, ma non si sincronizzeranno più finché non accedi di nuovo.')) return;
+  drive.signOut();
+  refreshDriveSection(); renderSyncChip(); render();
+  toast('Scollegato da Google Drive');
+});
+$('#btnClientChange').addEventListener('click', () => {
+  if (drive.isEnabled() && !confirm('Cambiare l\'ID client ti scollega da Google Drive su questo dispositivo. Continuare?')) return;
+  drive.signOut();
+  drive.setClientId('');
+  refreshDriveSection(); renderSyncChip(); render();
+});
+$('#btnClientPaste').addEventListener('click', async () => {
+  try {
+    const text = await navigator.clipboard.readText();
+    const m = text.match(/[0-9]+-[0-9a-z]+\.apps\.googleusercontent\.com/i);
+    if (m) { $('#driveClient').value = m[0]; toast('ID client incollato: ora premi «Salva»'); }
+    else toast("Negli appunti non c'è un ID client: finisce con .apps.googleusercontent.com");
+  } catch (err) {
+    $('#driveClient').focus();
+    toast('Tieni premuto nel campo e scegli «Incolla»');
+  }
+});
+$('#btnClientSave').addEventListener('click', () => {
+  const raw = $('#driveClient').value;
+  const m = raw.match(/[0-9]+-[0-9a-z]+\.apps\.googleusercontent\.com/i);
+  if (!m || !drive.isValidClientId(m[0])) {
+    $('#clientMsg').textContent = 'ID client non valido: è una sequenza di numeri e lettere che finisce con .apps.googleusercontent.com. Copialo di nuovo dalla pagina Credenziali.';
+    return;
+  }
+  drive.setClientId(m[0]);
+  drive.prepare().catch(() => {});
+  refreshDriveSection(); refreshInviteHint();
+  toast('ID client salvato: ora premi «Accedi con Google»');
+});
+
+window.addEventListener('sync-status', () => {
+  renderSyncChip();
+  if ($('#dlgSettings').open) refreshDriveSection();
+});
+// La sincronizzazione ha portato modifiche dagli altri dispositivi
+window.addEventListener('sync-applied', async () => {
+  await reload();
+  const b = state.books.find(x => x.id === currentId);
+  if ($('#dlgBook').open) {
+    if (b) renderDetail(b);
+    else { closeSheet($('#dlgBook')); toast('Questo libro è stato eliminato su un altro dispositivo'); }
+  }
+});
+// Niente sincronizzazioni automatiche mentre leggi o compili una scheda: aspettano la chiusura
+sync.setBusy(() => $('#dlgReader').open || $('#dlgForm').open);
+$('#dlgForm').addEventListener('sheetclosed', () => sync.schedule(2000));
+
+function startDriveSync() {
+  if (!drive.isEnabled()) { renderSyncChip(); return; }
+  drive.prepare().catch(() => {}); // carico in anticipo il client di Google
+  renderSyncChip();
+  sync.autoSync();
+}
+document.addEventListener('visibilitychange', () => {
+  if (!drive.isEnabled()) return;
+  if (document.visibilityState === 'visible') {
+    renderSyncChip();
+    if (Date.now() - sync.status().at > 60000) sync.autoSync();
+  } else if (localStorage.getItem('syncDirty') === '1') {
+    sync.autoSync(); // l'app va in secondo piano: provo a salvare subito le modifiche
+  }
+});
+window.addEventListener('online', () => { if (drive.isEnabled()) setTimeout(() => sync.autoSync(), 1500); });
+setInterval(() => { if (document.visibilityState === 'visible') renderSyncChip(); }, 60000);
+
 // ------------------------------------------------------------ invito
 // Il link contiene la chiave nel "frammento", la parte dopo #: il browser non lo invia
 // mai al server, quindi la chiave non passa da GitHub. Chi apre il link la trova salvata.
 function inviteLink() {
   const url = new URL('./', location.href);
-  const key = getGoogleKey();
-  if (key) url.hash = 'invito=' + encodeURIComponent(key);
+  const key = getGoogleKey(), client = drive.getClientId();
+  const parts = [];
+  if (key || client) parts.push('invito=' + encodeURIComponent(key || ''));
+  if (client) parts.push('client=' + encodeURIComponent(client));
+  if (parts.length) url.hash = parts.join('&');
   return url.href;
 }
 function refreshInviteHint() {
-  $('#inviteHint').textContent = getGoogleKey()
+  const parts = [getGoogleKey()
     ? "Manda a un'altra persona il link per installare Scaffale. Il link contiene la tua chiave di ricerca: chi lo apre trova la ricerca dei libri già pronta. Mandalo solo a persone di cui ti fidi."
-    : "Manda a un'altra persona il link per installare Scaffale. Non hai una chiave salvata: chi lo apre dovrà configurare la ricerca da sé.";
+    : "Manda a un'altra persona il link per installare Scaffale. Non hai una chiave salvata: chi lo apre dovrà configurare la ricerca da sé."];
+  if (drive.getClientId()) parts.push("Contiene anche l'accesso a Google Drive: potrà sincronizzare la sua libreria con il suo Drive, dopo che avrai aggiunto il suo indirizzo Gmail tra gli «Utenti di test» nella console di Google.");
+  $('#inviteHint').textContent = parts.join(' ');
 }
 $('#btnInvite').addEventListener('click', async () => {
   const url = inviteLink();
@@ -1289,17 +1642,25 @@ $('#btnInvite').addEventListener('click', async () => {
 
 // All'apertura di un link di invito: salva la chiave e la toglie dall'indirizzo
 function acceptInvite() {
-  const m = location.hash.match(/invito=([^&]+)/);
-  if (!m) return;
+  if (!/(^|[#&])invito=/.test(location.hash)) return;
+  const params = new URLSearchParams(location.hash.slice(1));
   history.replaceState(null, '', location.pathname + location.search);
-  let key = '';
-  try { key = decodeURIComponent(m[1]); } catch (e) { /* link rovinato */ }
-  if (!/^AIza[0-9A-Za-z_\-]{30,56}$/.test(key)) { toast('Il link di invito non è valido'); return; }
-  const current = getStoredGoogleKey();
-  if (current === key) return;
-  if (current && !confirm('Il link di invito contiene una chiave di ricerca diversa da quella che hai già salvato. Vuoi sostituirla?')) return;
-  setGoogleKey(key);
-  toast('Benvenuto! La ricerca dei libri è già configurata.', 5000);
+  const key = params.get('invito') || '';
+  const client = params.get('client') || '';
+  const okKey = /^AIza[0-9A-Za-z_\-]{30,56}$/.test(key);
+  const okClient = drive.isValidClientId(client);
+  if (!okKey && !okClient) { toast('Il link di invito non è valido'); return; }
+  const done = [];
+  if (okKey && getStoredGoogleKey() !== key) {
+    const current = getStoredGoogleKey();
+    if (!current || confirm('Il link di invito contiene una chiave di ricerca diversa da quella che hai già salvato. Vuoi sostituirla?')) {
+      setGoogleKey(key); done.push('la ricerca dei libri');
+    }
+  }
+  if (okClient && drive.getStoredClientId() !== client && !drive.isEnabled()) {
+    drive.setClientId(client); done.push('il collegamento a Google Drive');
+  }
+  if (done.length) toast(`Benvenuto! Ho già configurato ${done.join(' e ')}.`, 6000);
 }
 
 async function requestPersistence() {
@@ -1338,4 +1699,7 @@ if ('serviceWorker' in navigator) {
   });
   navigator.serviceWorker.register('sw.js').catch(err => console.warn('SW', err));
 }
-reload().then(() => setTimeout(autoComplete, 4000));
+reload().then(() => {
+  startDriveSync();
+  setTimeout(autoComplete, 4000);
+});

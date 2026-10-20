@@ -86,12 +86,34 @@ Se il file ha un numero di pagine diverso dall'edizione cartacea, il segnalibro
 viene convertito in proporzione. Per un EPUB senza pagine note, Scaffale le stima
 dalla lunghezza del testo; puoi correggerle dalla scheda del libro.
 
+## Sincronizzazione con Google Drive
+
+In Impostazioni → «Sincronizzazione con Google Drive» colleghi Scaffale al tuo Drive.
+La preparazione si fa una volta sola dalla console di Google (la guida passo passo è
+nell'app): abiliti l'API di Google Drive, configuri la schermata di consenso con te
+come «utente di test» e crei un «ID client OAuth» di tipo «Applicazione web» con
+origine `https://ronny421.github.io`. Poi incolli l'ID client nell'app e premi
+«Accedi con Google» su ogni dispositivo.
+
+- Elenco, segnalibri e copertine si sincronizzano da soli, in una cartella nascosta
+  del tuo Drive riservata a Scaffale.
+- I PDF e gli EPUB li gestisci tu, dalla scheda del libro, come su OneDrive:
+  «Carica su Drive», «Scarica sul telefono», «Libera spazio sul telefono»,
+  «Elimina da Drive». I file caricati stanno nella cartella «Scaffale» del tuo Drive.
+- Se modifichi lo stesso libro su due dispositivi, vince la modifica più recente;
+  il segnalibro si unisce a parte, quindi correggere un titolo sul computer non
+  cancella la pagina letta sul telefono.
+- Il permesso di Google dura circa un'ora. Finché è valido la sincronizzazione è
+  automatica; quando scade, in alto compare «Tocca per sincronizzare»: un tocco lo
+  rinnova.
+- Scaffale può vedere solo i file che ha creato lei, non il resto del tuo Drive.
+
 ## Usarla dal computer
 
 Apri lo stesso indirizzo con Chrome o Edge: puoi anche installarla dall'icona
-nella barra degli indirizzi. La libreria del computer però è separata da quella
-del telefono. Per copiarla: sul telefono «Salva copia», poi sul computer
-«Ripristina copia». Su molti computer Chrome non legge i codici a barre: scrivi
+nella barra degli indirizzi. Con la sincronizzazione con Google Drive ritrovi la
+stessa libreria; senza, quella del computer è separata (puoi copiarla con
+«Salva copia» sul telefono e «Ripristina copia» sul computer). Su molti computer Chrome non legge i codici a barre: scrivi
 l'ISBN a mano.
 
 ## Farla installare a un'altra persona

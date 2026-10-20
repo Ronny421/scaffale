@@ -52,6 +52,13 @@ function reqP(req) {
   });
 }
 
+// Ogni modifica avvisa il resto dell'app (per esempio la sincronizzazione), tranne
+// quelle fatte con { quiet: true }: la sincronizzazione stessa scrive così, altrimenti
+// ogni sincronizzazione ne provocherebbe un'altra all'infinito.
+function changed(opts) {
+  if (!(opts && opts.quiet)) window.dispatchEvent(new Event('library-changed'));
+}
+
 export const db = {
   all() {
     return tx('books', 'readonly', store => reqP(store.getAll()));
@@ -59,17 +66,18 @@ export const db = {
   get(id) {
     return tx('books', 'readonly', store => reqP(store.get(id)));
   },
-  put(book) {
+  put(book, opts) {
     book.updatedAt = Date.now();
-    return tx('books', 'readwrite', store => reqP(store.put(book))).then(() => book);
+    return tx('books', 'readwrite', store => reqP(store.put(book))).then(() => { changed(opts); return book; });
   },
-  putMany(books) {
-    return tx('books', 'readwrite', store => Promise.all(books.map(b => reqP(store.put(b)))));
+  putMany(books, opts) {
+    return tx('books', 'readwrite', store => Promise.all(books.map(b => reqP(store.put(b))))).then(r => { changed(opts); return r; });
   },
   // Elimina il libro e, se c'è, la sua copia digitale
-  remove(id) {
+  remove(id, opts) {
     return tx('books', 'readwrite', store => reqP(store.delete(id)))
-      .then(() => tx('files', 'readwrite', store => reqP(store.delete(id))));
+      .then(() => tx('files', 'readwrite', store => reqP(store.delete(id))))
+      .then(() => changed(opts));
   },
   files: {
     get(bookId) {

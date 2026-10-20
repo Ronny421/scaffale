@@ -30,6 +30,10 @@
     <symbol id="i-left" viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></symbol>
     <symbol id="i-right" viewBox="0 0 24 24"><path d="M9 5l7 7-7 7" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></symbol>
     <symbol id="i-book" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M12 6c-2-1.5-5-2-8-2v14c3 0 6 .5 8 2 2-1.5 5-2 8-2V4c-3 0-6 .5-8 2z"/><path d="M12 6v14"/></g></symbol>
+    <symbol id="i-cloud" viewBox="0 0 24 24"><path d="M7 18h10a4 4 0 0 0 .6-7.96A6 6 0 0 0 6.1 9.3 4.4 4.4 0 0 0 7 18z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></symbol>
+    <symbol id="i-phone" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="6" y="2.5" width="12" height="19" rx="2.5"/><path d="M10.5 18.5h3" stroke-linecap="round"/></g></symbol>
+    <symbol id="i-up" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V6M7.5 10.5 12 6l4.5 4.5M5 19h14"/></g></symbol>
+    <symbol id="i-down" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v10M7.5 10.5 12 15l4.5-4.5M5 19h14"/></g></symbol>
     <symbol id="i-ribbon" viewBox="0 0 24 24"><path d="M7 3h10v18l-5-4-5 4z" fill="currentColor"/></symbol>
   </svg>
 
@@ -42,6 +46,7 @@
       </div>
     </div>
     <p class="stats" id="stats"></p>
+    <button class="sync-chip" id="syncChip" hidden><span class="sync-dot"></span><span id="syncText"></span></button>
     <label class="search">
       <svg><use href="#i-search"/></svg>
       <input id="q" type="search" placeholder="Cerca titolo, autore, ISBN…" autocomplete="off">
@@ -242,6 +247,43 @@
           <li>Torna qui, premi «Incolla» e poi «Salva e verifica».</li>
         </ol>
       </details>
+    </section>
+    <section class="set" id="driveSection">
+      <h3>Sincronizzazione con Google Drive</h3>
+      <p class="hint">Collega Scaffale al tuo Google Drive per avere la stessa libreria su telefono e computer. Elenco, segnalibri e copertine si sincronizzano da soli; i PDF e gli EPUB li carichi tu, libro per libro, dalla scheda del libro.</p>
+      <div id="driveSetup">
+        <div class="field key-field">
+          <span>ID client OAuth di Google</span>
+          <div class="key-row">
+            <input id="driveClient" aria-label="ID client OAuth di Google" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="123…apps.googleusercontent.com">
+            <button type="button" class="btn ghost small" id="btnClientPaste">Incolla</button>
+          </div>
+        </div>
+        <div class="row-btns"><button class="btn small" id="btnClientSave">Salva</button></div>
+        <p class="hint" id="clientMsg"></p>
+        <details class="how" id="driveHow">
+          <summary>Come preparare l'accesso a Drive (una volta sola)</summary>
+          <p class="hint">Conviene farlo dal computer, nello stesso progetto Google della chiave di ricerca. Controlla sempre in alto che sia selezionato quel progetto.</p>
+          <ol>
+            <li>Apri <a href="https://console.cloud.google.com/apis/library/drive.googleapis.com" target="_blank" rel="noopener">Google Drive API</a> e premi «Abilita».</li>
+            <li>Apri la <a href="https://console.cloud.google.com/apis/credentials/consent" target="_blank" rel="noopener">schermata di consenso OAuth</a> (Google Auth Platform) e premi «Inizia». Nome dell'app: Scaffale; email di assistenza: la tua. Come pubblico scegli «Esterno», inserisci la tua email di contatto, accetta le norme e premi «Crea».</li>
+            <li>Nel menu a sinistra apri «Pubblico» (Audience). Sotto «Utenti di test» aggiungi il tuo indirizzo Gmail, e quelli delle persone che inviterai.</li>
+            <li>Apri «Accesso ai dati» (Data access), premi «Aggiungi o rimuovi ambiti», seleziona <code>…/auth/drive.file</code> e <code>…/auth/drive.appdata</code>, poi «Aggiorna» e «Salva».</li>
+            <li>Apri <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener">Credenziali</a>, poi «Crea credenziali» e «ID client OAuth». Tipo: «Applicazione web», nome: Scaffale. In «Origini JavaScript autorizzate» aggiungi <code>https://ronny421.github.io</code>, senza barra finale. Non servono URI di reindirizzamento. Premi «Crea».</li>
+            <li>Copia l'«ID client» (finisce con .apps.googleusercontent.com), incollalo qui sopra e premi «Salva». Il «client secret» non serve: non condividerlo con nessuno.</li>
+          </ol>
+        </details>
+      </div>
+      <div id="driveAccount" hidden>
+        <p class="drive-status" id="driveStatus"></p>
+        <div class="row-btns">
+          <button class="btn small" id="btnDriveSignIn">Accedi con Google</button>
+          <button class="btn small" id="btnDriveSync">Sincronizza ora</button>
+          <button class="btn ghost small" id="btnDriveSignOut">Esci</button>
+        </div>
+        <p class="hint" id="driveNote"></p>
+        <button type="button" class="link" id="btnClientChange">Cambia ID client</button>
+      </div>
     </section>
     <section class="set">
       <h3>Invita qualcuno</h3>

@@ -398,3 +398,31 @@ dialog.reader.immersive .reader-top, dialog.reader.immersive .reader-bottom { di
 .pdf-page { display: block; margin: auto; background: #fff; box-shadow: 0 1px 10px rgba(0,0,0,.18); }
 .reader-loading { position: absolute; inset: 0; display: grid; place-items: center; gap: 8px; background: var(--paper); color: var(--muted); font-size: 15px; }
 dialog.reader:not([open]) { display: none; }
+
+/* Sincronizzazione */
+.sync-chip {
+  display: inline-flex; align-items: center; gap: 8px; margin: -6px 0 14px; padding: 6px 12px;
+  border: 1px solid var(--line); border-radius: 999px; background: var(--surface); color: var(--muted);
+  font-size: 13.5px; font-weight: 550;
+}
+.sync-chip .sync-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); flex: none; }
+.sync-chip[data-state="syncing"] .sync-dot { background: var(--accent); animation: pulse 1s ease-in-out infinite alternate; }
+.sync-chip[data-state="login"] { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.sync-chip[data-state="login"] .sync-dot { background: var(--accent-ink); }
+.sync-chip[data-state="error"] .sync-dot, .sync-chip[data-state="offline"] .sync-dot { background: var(--danger); }
+@keyframes pulse { from { opacity: .35; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .sync-chip .sync-dot { animation: none !important; } }
+.drive-status { margin: 0 0 4px; font-weight: 600; overflow-wrap: anywhere; }
+#driveAccount .link { padding: 8px 0 0; }
+
+/* Copia digitale: dove si trova */
+.where { display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--muted); margin: 6px 0 2px; }
+.where svg { width: 18px; height: 18px; }
+.where .both { display: inline-flex; gap: 2px; }
+.where.cloud { color: var(--accent); }
+.more { margin-top: 10px; }
+.more summary { cursor: pointer; font-size: 14px; font-weight: 650; color: var(--muted); padding: 4px 0; }
+.more .bm-actions { margin-top: 6px; }
+.xfer { margin-top: 12px; }
+.xfer .progress { margin-top: 0; }
+.xfer-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 8px; font-size: 14px; color: var(--muted); }
