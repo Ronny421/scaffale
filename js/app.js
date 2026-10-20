@@ -7,8 +7,9 @@ import {
 import { barcodeSupported, scanIsbn } from './scanner.js';
 import { ocrReady, downloadOcr, removeOcr, recognize } from './ocr.js';
 import { buildPdf } from './pdf.js';
+import { Reader } from './reader.js';
 
-const VERSION = '1.7.0';
+const VERSION = '1.8.0';
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -140,7 +141,7 @@ function openSheet(dlg) {
 function closeSheet(dlg) {
   if (dlg && dlg.open) dlg.close();
 }
-$$('dialog.sheet').forEach(dlg => {
+$$('dialog.sheet, dialog.reader').forEach(dlg => {
   dlg.addEventListener('close', () => {
     const i = openStack.lastIndexOf(dlg);
     if (i >= 0) {
@@ -374,7 +375,8 @@ function digitalHtml(b) {
       <div class="bookmark-head"><svg><use href="#i-file"/></svg><strong>Copia digitale</strong><span class="badge">${fileKind(b.file)}</span></div>
       <p class="file-name">${esc(b.file.name)}<small>${formatSize(b.file.size)}, salvato solo su questo telefono</small></p>
       <div class="bm-actions">
-        <button class="btn small" id="fOpen">Apri con…</button>
+        <button class="btn small" id="fRead"><svg><use href="#i-book"/></svg>Leggi</button>
+        <button class="btn ghost small" id="fOpen">Apri con…</button>
         <button class="btn ghost small" id="fSave">Salva nei Download</button>
         <button class="btn danger small" id="fRemove">Rimuovi</button>
       </div>
@@ -432,6 +434,88 @@ $('#bookFileInput').addEventListener('change', async e => {
   toast('File salvato solo su questo telefono');
 });
 
+// ------------------------------------------------------------ lettore integrato
+// Mentre leggi, la posizione nel file diventa il segnalibro dello scaffale.
+let reader = null, readingId = null, readTimer = null;
+function getReader() {
+  if (!reader) {
+    reader = new Reader({
+      root: $('#dlgReader'), view: $('#rView'), where: $('#rWhere'), range: $('#rRange'),
+      prev: $('#rPrev'), next: $('#rNext'), smaller: $('#rSmaller'), bigger: $('#rBigger'),
+    }, { onProgress: readerProgress });
+  }
+  return reader;
+}
+function readerColors() {
+  const t = document.documentElement.dataset.theme;
+  const dark = t === 'dark' || (!t && matchMedia('(prefers-color-scheme: dark)').matches);
+  return dark
+    ? { dark: true, bg: '#141829', ink: '#E3E5F2', accent: '#8287FF' }
+    : { dark: false, bg: '#FFFFFF', ink: '#1D2340', accent: '#3A3FD4' };
+}
+
+async function openReaderFor(b) {
+  const rec = await db.files.get(b.id);
+  if (!rec) {
+    delete b.file; await db.put(b); renderDetail(b);
+    toast('Il file non è su questo telefono: allegalo di nuovo');
+    return;
+  }
+  const kind = fileKind(rec);
+  readingId = b.id;
+  $('#rTitle').textContent = titleOf(b);
+  $('#rWhere').textContent = '';
+  $('#rLoading').hidden = false;
+  openSheet($('#dlgReader'));
+  // Riprendo dal punto esatto in cui avevi chiuso; altrimenti dalla pagina del segnalibro
+  const pos = b.readerPos && b.readerPos.kind === kind.toLowerCase() ? b.readerPos
+    : (b.currentPage > 0 && b.pages ? { fraction: b.currentPage / b.pages } : null);
+  try {
+    await getReader().open({
+      blob: rec.blob, kind, pos,
+      fontScale: +(localStorage.getItem('readerFont') || 100),
+      colors: readerColors(),
+    });
+    $('#rView').focus();
+  } catch (err) {
+    console.error(err);
+    closeSheet($('#dlgReader'));
+    toast('Non riesco ad aprire questo file: ' + (err.message || 'formato non riconosciuto'), 6000);
+  } finally {
+    $('#rLoading').hidden = true;
+  }
+}
+
+function readerProgress(p) {
+  const b = state.books.find(x => x.id === readingId);
+  if (!b) return '';
+  // Se lo scaffale non conosce le pagine: quelle del PDF, o una stima per l'EPUB
+  if (!b.pages) { b.pages = p.units; b.pagesEstimated = p.kind === 'epub'; }
+  // Le pagine del file possono essere diverse da quelle dell'edizione: le converto in proporzione
+  const page = p.kind === 'pdf' && b.pages === p.units ? p.page : Math.max(1, Math.round(p.fraction * b.pages));
+  b.currentPage = Math.min(page, b.pages);
+  b.finished = b.currentPage >= b.pages;
+  b.bookmarkAt = Date.now();
+  b.readerPos = p.kind === 'pdf' ? { kind: 'pdf', page: p.page } : { kind: 'epub', chapter: p.chapter, frac: p.frac };
+  clearTimeout(readTimer);
+  readTimer = setTimeout(() => db.put(b), 600);
+  return `pag. ${b.currentPage} di ${b.pages}${b.pagesEstimated ? ' (stimate)' : ''}`;
+}
+
+$('#rClose').addEventListener('click', () => closeSheet($('#dlgReader')));
+$('#dlgReader').addEventListener('sheetclosed', async () => {
+  clearTimeout(readTimer);
+  // Prima di tutto salvo il segnalibro: qualunque cosa succeda dopo, la posizione è al sicuro
+  const b = state.books.find(x => x.id === readingId);
+  readingId = null;
+  if (b) await db.put(b);
+  const fs = getReader().fontScale();
+  if (fs) localStorage.setItem('readerFont', String(fs));
+  getReader().close();
+  if (b && $('#dlgBook').open && currentId === b.id) renderDetail(b);
+  render();
+});
+
 function setPage(v) {
   const b = state.books.find(x => x.id === currentId);
   if (!b) return;
@@ -469,6 +553,7 @@ $('#dlgBook').addEventListener('click', async e => {
     closeSheet($('#dlgBook')); render(); return;
   }
   if (e.target.closest('#fAdd')) { $('#bookFileInput').click(); return; }
+  if (e.target.closest('#fRead')) { openReaderFor(b); return; }
   if (e.target.closest('#fOpen')) { openBookFile(b, 'share'); return; }
   if (e.target.closest('#fSave')) { openBookFile(b, 'download'); return; }
   if (e.target.closest('#fRemove')) {
@@ -619,6 +704,7 @@ form.addEventListener('submit', async e => {
   };
   if (formCtx.coverChanged) { book.cover = formCtx.cover; book.coverStamp = Date.now(); }
   if (book.pages && book.currentPage > book.pages) book.currentPage = book.pages;
+  if (book.pagesEstimated && formCtx.existing && book.pages !== formCtx.existing.pages) book.pagesEstimated = false;
   await db.put(book);
   requestPersistence();
   closeSheet($('#dlgForm'));

@@ -73,6 +73,27 @@ non viene mai caricato online, nemmeno su GitHub. «Apri con…» lo passa alla 
 di lettura; «Salva nei Download» ne salva una copia. La copia di sicurezza non
 include i file, che possono essere molto grandi: conserva gli originali.
 
+## Lettore integrato
+
+Se a un libro hai allegato il PDF o l'EPUB, nella scheda c'è «Leggi». Il lettore
+riparte dal punto in cui avevi lasciato e aggiorna da solo il segnalibro.
+Tocca a destra per andare avanti, a sinistra per tornare indietro, al centro per
+nascondere i comandi; puoi anche scorrere con il dito o, dal computer, usare le
+frecce della tastiera. «A−/A+» cambiano la dimensione del testo degli EPUB,
+«−/+» ingrandiscono i PDF. Funziona anche senza internet.
+
+Se il file ha un numero di pagine diverso dall'edizione cartacea, il segnalibro
+viene convertito in proporzione. Per un EPUB senza pagine note, Scaffale le stima
+dalla lunghezza del testo; puoi correggerle dalla scheda del libro.
+
+## Usarla dal computer
+
+Apri lo stesso indirizzo con Chrome o Edge: puoi anche installarla dall'icona
+nella barra degli indirizzi. La libreria del computer però è separata da quella
+del telefono. Per copiarla: sul telefono «Salva copia», poi sul computer
+«Ripristina copia». Su molti computer Chrome non legge i codici a barre: scrivi
+l'ISBN a mano.
+
 ## Farla installare a un'altra persona
 
 In Impostazioni → «Invita qualcuno» l'app crea un link da mandare (per esempio su

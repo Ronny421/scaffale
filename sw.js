@@ -1,7 +1,7 @@
 // Service worker: è il "motore" che fa funzionare l'app senza internet.
 // Al primo avvio salva tutti i file dell'app in una cache; poi li serve da lì.
 
-const VERSION = 'scaffale-v1.7.0';
+const VERSION = 'scaffale-v1.8.0';
 const OCR_CACHE = 'scaffale-ocr-v1';
 const FONT_CACHE = 'scaffale-fonts-v1';
 
@@ -17,6 +17,14 @@ const SHELL = [
   './js/ocr.js',
   './js/pdf.js',
   './vendor/pdf-lib.min.js',
+  './js/reader.js',
+  './vendor/jszip.min.js',
+  './vendor/pdfjs/pdf.min.js',
+  './vendor/pdfjs/pdf.worker.min.js',
+  './vendor/pdfjs/wasm/jbig2.wasm',
+  './vendor/pdfjs/wasm/openjpeg.wasm',
+  './vendor/pdfjs/wasm/qcms_bg.wasm',
+  './vendor/pdfjs/iccs/CGATS001Compat-v2-micro.icc',
   './icons/icon-192.png',
   './icons/icon-512.png',
   './icons/icon-maskable-512.png',

@@ -27,6 +27,9 @@
     <symbol id="i-pen" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="m13.5 6.5 4 4"/></g></symbol>
     <symbol id="i-close" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></symbol>
     <symbol id="i-file" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h4"/></g></symbol>
+    <symbol id="i-left" viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-right" viewBox="0 0 24 24"><path d="M9 5l7 7-7 7" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-book" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M12 6c-2-1.5-5-2-8-2v14c3 0 6 .5 8 2 2-1.5 5-2 8-2V4c-3 0-6 .5-8 2z"/><path d="M12 6v14"/></g></symbol>
     <symbol id="i-ribbon" viewBox="0 0 24 24"><path d="M7 3h10v18l-5-4-5 4z" fill="currentColor"/></symbol>
   </svg>
 
@@ -169,6 +172,23 @@
     <div class="grab"></div>
     <div class="detail" id="detail"></div>
     <input type="file" id="bookFileInput" accept=".pdf,.epub,application/pdf,application/epub+zip" hidden>
+  </dialog>
+
+  <!-- Lettore integrato -->
+  <dialog class="reader" id="dlgReader" aria-label="Lettore">
+    <div class="reader-top">
+      <button class="icon-btn small" id="rClose" aria-label="Chiudi il lettore"><svg><use href="#i-close"/></svg></button>
+      <div class="reader-title"><strong id="rTitle"></strong><span id="rWhere"></span></div>
+    </div>
+    <div class="reader-view" id="rView" tabindex="0"></div>
+    <div class="reader-bottom">
+      <button class="icon-btn small" id="rPrev" aria-label="Pagina precedente"><svg><use href="#i-left"/></svg></button>
+      <input type="range" id="rRange" min="0" max="1000" value="0" aria-label="Posizione nel libro">
+      <button class="icon-btn small" id="rNext" aria-label="Pagina successiva"><svg><use href="#i-right"/></svg></button>
+      <button class="btn ghost small" id="rSmaller">A−</button>
+      <button class="btn ghost small" id="rBigger">A+</button>
+    </div>
+    <div class="reader-loading" id="rLoading" hidden><span class="spinner"></span> Apro il libro…</div>
   </dialog>
 
   <!-- Esporta PDF -->
