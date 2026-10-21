@@ -43,6 +43,7 @@ ed è proprio quello che GitHub Pages fornisce.
 | Scansione del codice a barre | Sì (legge l'ISBN) |
 | Lettura testo da foto (OCR) | Sì, dopo il download unico |
 | Esporta PDF | Sì |
+| Aggiungere libri da file PDF ed EPUB | Sì (genere e pagine mancanti arrivano quando torni online) |
 | Dati automatici da ISBN (titolo, autore, anno, genere, copertina) | No: servono gli archivi online. I libri aggiunti offline vengono completati quando torni online, con il pulsante "Completa ora" |
 
 ## Se la ricerca per ISBN non trova i libri
@@ -65,13 +66,47 @@ Scaffale riprova da sola una volta al giorno, all'apertura, e riempie i campi
 vuoti appena il libro compare (senza toccare quelli scritti da te). Per avere
 subito titolo e autore, nel modulo tocca «Copertina» e fotografala.
 
+## Aggiungere libri da file (PDF, EPUB, anche per Kobo)
+
+Se hai degli ebook in una cartella, Scaffale crea i libri direttamente dai file:
+legge titolo, autore, anno, editore, ISBN e copertina, e allega il file come copia
+digitale. Funziona anche senza internet.
+
+- **Dal computer**: trascina i file (o un'intera cartella, con le sottocartelle) nella
+  finestra di Scaffale. In alternativa copiali in Esplora file (Ctrl+C) e incollali in
+  Scaffale (Ctrl+V), oppure usa «Aggiungi libro» → «Da file PDF o EPUB» o «Da una
+  cartella». Chrome chiede se «caricare» i file: restano comunque sul computer.
+- **Dal telefono**: «Aggiungi libro» → «Da file PDF o EPUB», e scegli uno o più file.
+  Oppure, dall'app File, seleziona i libri e usa Condividi → Scaffale. Dopo
+  l'aggiornamento il telefono può impiegare circa un giorno prima di mostrare Scaffale
+  nel menu Condividi.
+
+Prima di salvare, Scaffale mostra l'elenco con quello che farà per ogni file:
+- **Nuovo libro**: viene creato e segnato come «solo digitale». Se in realtà hai anche il
+  cartaceo, togli la spunta dalla scheda del libro, con «Modifica».
+- **Diventa la copia digitale di…**: il libro c'è già (stesso ISBN, oppure stesso titolo
+  e stesso autore). Il file viene allegato a quello, senza creare doppioni.
+- **Già nello scaffale** o **ha già un altro file**: non viene aggiunto.
+
+Gli EPUB per Kobo con estensione `.kepub.epub` vanno bene. Quello che il file non
+contiene (di solito genere e pagine) Scaffale lo cerca online, per ISBN oppure per titolo
+e autore, appena c'è internet. Se usi Google Drive, spunta «Carica i file anche su Google
+Drive» per ritrovarli anche sugli altri dispositivi.
+
+**Libri protetti da DRM.** Gli ebook comprati in molti negozi sono cifrati: solo i
+dispositivi e le app autorizzati dal negozio (per esempio il tuo Kobo, o Adobe Digital
+Editions) possono aprirli. Scaffale li cataloga lo stesso, li segna con un lucchetto e li
+passa ad altre app con «Apri con…», ma non può leggerli: togliere la protezione non è
+permesso.
+
 ## Copia digitale di un libro (PDF o EPUB)
 
 Nella scheda di ogni libro, sezione «Copia digitale», puoi allegare il PDF o l'EPUB.
-Il file viene copiato nel database interno dell'app e resta solo sul telefono:
-non viene mai caricato online, nemmeno su GitHub. «Apri con…» lo passa alla tua app
-di lettura; «Salva nei Download» ne salva una copia. La copia di sicurezza non
-include i file, che possono essere molto grandi: conserva gli originali.
+Il file viene copiato nel database interno dell'app e resta sul dispositivo: va online
+solo se lo carichi tu su Google Drive, e mai su GitHub. Se il libro non ha una copertina,
+Scaffale la prende dal file. «Apri con…» lo passa alla tua app di lettura; «Salva nei
+Download» ne salva una copia. La copia di sicurezza non include i file, che possono
+essere molto grandi: conserva gli originali.
 
 ## Lettore integrato
 

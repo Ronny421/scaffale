@@ -100,7 +100,7 @@ export async function buildPdf(groups, { title, groupLabel, includeCovers, color
       const textW = W - M - x - 110;
       page.drawText(fit(bold, b.title || 'Senza titolo', 11.5, textW), { x, y: top - 12, size: 11.5, font: bold, color: INK });
       page.drawText(fit(reg, b.author || 'Autore sconosciuto', 10, textW), { x, y: top - 26, size: 10, font: reg, color: INK });
-      const meta = [b.year, b.genre, b.publisher].filter(Boolean).join('  /  ');
+      const meta = [b.year, b.genre, b.publisher, b.digitalOnly && 'solo digitale'].filter(Boolean).join('  /  ');
       if (meta) page.drawText(fit(reg, meta, 8.5, textW), { x, y: top - 39, size: 8.5, font: reg, color: GREY });
 
       // Colonna del segnalibro

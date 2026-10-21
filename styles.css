@@ -12,6 +12,7 @@
   --wood-dark: #6A4229;
   --ok: #1E8E5A;
   --danger: #C62F3B;
+  --warn: #8F6200;
   --shadow: 0 1px 2px rgba(29, 35, 64, .08), 0 8px 24px rgba(29, 35, 64, .10);
   --font: "Bricolage Grotesque", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   color-scheme: light;
@@ -20,7 +21,7 @@
   :root:not([data-theme="light"]) {
     --bg: #141829; --surface: #1E2340; --surface-2: #252B4D; --ink: #E9EBF7; --muted: #A0A6C4;
     --line: #313860; --accent: #8287FF; --accent-ink: #10132A; --accent-soft: #2B3166;
-    --wood: #7A4F33; --wood-dark: #4E301E; --ok: #4CC38A; --danger: #FF6B76;
+    --wood: #7A4F33; --wood-dark: #4E301E; --ok: #4CC38A; --danger: #FF6B76; --warn: #F0C24B;
     --shadow: 0 1px 2px rgba(0,0,0,.3), 0 10px 28px rgba(0,0,0,.35);
     color-scheme: dark;
   }
@@ -28,7 +29,7 @@
 :root[data-theme="dark"] {
   --bg: #141829; --surface: #1E2340; --surface-2: #252B4D; --ink: #E9EBF7; --muted: #A0A6C4;
   --line: #313860; --accent: #8287FF; --accent-ink: #10132A; --accent-soft: #2B3166;
-  --wood: #7A4F33; --wood-dark: #4E301E; --ok: #4CC38A; --danger: #FF6B76;
+  --wood: #7A4F33; --wood-dark: #4E301E; --ok: #4CC38A; --danger: #FF6B76; --warn: #F0C24B;
   --shadow: 0 1px 2px rgba(0,0,0,.3), 0 10px 28px rgba(0,0,0,.35);
   color-scheme: dark;
 }
@@ -448,3 +449,49 @@ dialog.reader:not([open]) { display: none; }
 .seg.reader-mode button { padding: 6px 9px; border-radius: 9px; display: grid; place-items: center; }
 .seg.reader-mode button svg { width: 20px; height: 20px; }
 .seg.reader-mode button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); }
+
+/* Aggiunta da file */
+.drop-zone {
+  position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; padding: 24px;
+  background: rgba(58, 63, 212, .16); backdrop-filter: blur(3px); pointer-events: none;
+}
+.drop-box {
+  display: grid; justify-items: center; gap: 6px; text-align: center; max-width: 420px;
+  padding: 34px 40px; border-radius: 28px; border: 3px dashed var(--accent);
+  background: var(--surface); color: var(--ink); box-shadow: var(--shadow);
+}
+.drop-box svg { width: 46px; height: 46px; color: var(--accent); }
+.drop-box strong { font-size: 22px; letter-spacing: -0.015em; }
+.drop-box span { color: var(--muted); font-size: 14.5px; }
+dialog.sheet.dragging { outline: 3px dashed var(--accent); outline-offset: -8px; }
+
+.imp-list { display: grid; gap: 8px; margin: 14px 0 8px; }
+.imp-row {
+  display: grid; grid-template-columns: auto 44px minmax(0, 1fr); gap: 12px; align-items: center;
+  padding: 10px 12px; border-radius: 16px; border: 1px solid var(--line); background: var(--surface-2);
+  text-align: left; width: 100%; color: var(--ink); font: inherit;
+}
+button.imp-row { grid-template-columns: 44px minmax(0, 1fr) auto; cursor: pointer; }
+.imp-row input { width: 22px; height: 22px; margin: 0; accent-color: var(--accent); }
+.imp-cover {
+  width: 44px; height: 64px; border-radius: 5px; object-fit: cover; background: var(--c, var(--line));
+  display: grid; place-items: center; color: #fff; font-weight: 800; font-size: 18px;
+  box-shadow: inset -3px 0 0 rgba(0,0,0,.12);
+}
+.imp-body { min-width: 0; display: grid; gap: 2px; }
+.imp-body strong { font-size: 15.5px; line-height: 1.25; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.imp-body small { color: var(--muted); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.imp-state { font-size: 13px; font-weight: 650; color: var(--accent); line-height: 1.3; }
+.imp-row.s-attach .imp-state, .imp-row.r-added .imp-state, .imp-row.r-attached .imp-state { color: var(--ok); }
+.imp-row.s-dup .imp-state, .imp-row.s-hasfile .imp-state, .imp-row.s-twin .imp-state { color: var(--muted); }
+.imp-row.s-error .imp-state, .imp-row.r-failed .imp-state { color: var(--danger); }
+.imp-row.s-dup, .imp-row.s-hasfile, .imp-row.s-twin, .imp-row.s-error { background: none; }
+.imp-warn { display: flex; gap: 5px; align-items: flex-start; font-size: 12.5px; line-height: 1.3; color: var(--warn); }
+.imp-warn svg { width: 14px; height: 14px; margin-top: 1px; }
+.imp-row .progress { display: block; height: 5px; margin-top: 5px; }
+.imp-go { width: 18px; height: 18px; color: var(--muted); }
+.imp-row .spinner { width: 14px; height: 14px; border-width: 2px; vertical-align: -2px; }
+#impSkipped { margin-bottom: 4px; }
+#dlgImport .form-actions:empty { display: none; }
+.form-actions.single { grid-template-columns: 1fr; }
+.where.warn { color: var(--warn); }

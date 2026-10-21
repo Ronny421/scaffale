@@ -37,6 +37,9 @@
     <symbol id="i-hscroll" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="2.5" y="5" width="8" height="14" rx="1.5"/><rect x="13.5" y="5" width="8" height="14" rx="1.5"/></g></symbol>
     <symbol id="i-vscroll" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="5" y="2.5" width="14" height="8" rx="1.5"/><rect x="5" y="13.5" width="14" height="8" rx="1.5"/></g></symbol>
     <symbol id="i-ribbon" viewBox="0 0 24 24"><path d="M7 3h10v18l-5-4-5 4z" fill="currentColor"/></symbol>
+    <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></symbol>
+    <symbol id="i-lock" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></g></symbol>
+    <symbol id="i-drop" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v11M7.5 9.5 12 14l4.5-4.5"/><path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/></g></symbol>
   </svg>
 
   <header class="top">
@@ -92,12 +95,22 @@
         <span class="choice-ic" style="--c:#E63946"><svg><use href="#i-camera"/></svg></span>
         <span><strong>Fotografa copertina o prime pagine</strong><small>L'app legge il testo della foto e ti propone titolo, autore, anno e ISBN.</small></span>
       </button>
+      <button class="choice" id="addFile">
+        <span class="choice-ic" style="--c:#7B4FBF"><svg><use href="#i-file"/></svg></span>
+        <span><strong>Da file PDF o EPUB</strong><small id="addFileHint">Scegli uno o più ebook: titolo, autore e copertina si leggono dal file, che diventa la copia digitale del libro.</small></span>
+      </button>
+      <button class="choice" id="addFolder" hidden>
+        <span class="choice-ic" style="--c:#C9A227"><svg><use href="#i-folder"/></svg></span>
+        <span><strong>Da una cartella</strong><small>Aggiunge tutti i PDF e gli EPUB che contiene, anche nelle sottocartelle. Chrome ti chiederà se «caricare» i file: restano comunque su questo computer.</small></span>
+      </button>
       <button class="choice" id="addManual">
         <span class="choice-ic" style="--c:#2A9D8F"><svg><use href="#i-pen"/></svg></span>
         <span><strong>Inserisci a mano</strong><small>Per libri senza codice o molto vecchi.</small></span>
       </button>
     </div>
     <input type="file" id="photoInput" accept="image/*" capture="environment" hidden>
+    <input type="file" id="importInput" accept=".epub,.kepub,.pdf,application/epub+zip,application/pdf" multiple hidden>
+    <input type="file" id="folderInput" webkitdirectory multiple hidden>
     <button class="btn ghost wide" data-close>Annulla</button>
   </dialog>
 
@@ -167,6 +180,7 @@
         <label class="field"><span>ISBN o EAN</span><input name="isbn" inputmode="numeric" autocomplete="off"></label>
         <label class="field"><span>Editore</span><input name="publisher" autocomplete="off"></label>
       </div>
+      <label class="switch"><input type="checkbox" name="digitalOnly"><span>Solo digitale: non ho la copia cartacea</span></label>
       <div class="form-actions">
         <button type="button" class="btn ghost" data-close>Annulla</button>
         <button type="submit" class="btn" id="btnSave">Salva libro</button>
@@ -178,8 +192,28 @@
   <dialog class="sheet tall" id="dlgBook">
     <div class="grab"></div>
     <div class="detail" id="detail"></div>
-    <input type="file" id="bookFileInput" accept=".pdf,.epub,application/pdf,application/epub+zip" hidden>
+    <input type="file" id="bookFileInput" accept=".pdf,.epub,.kepub,application/pdf,application/epub+zip" hidden>
   </dialog>
+
+  <!-- Aggiunta da file: anteprima, salvataggio, risultato -->
+  <dialog class="sheet tall" id="dlgImport" aria-labelledby="impTitle">
+    <div class="grab"></div>
+    <h2 id="impTitle">Aggiungi da file</h2>
+    <p class="hint" id="impHint" aria-live="polite"></p>
+    <div class="imp-list" id="impList"></div>
+    <p class="hint" id="impSkipped" hidden></p>
+    <label class="switch" id="impDriveRow" hidden><input type="checkbox" id="impDrive"><span>Carica i file anche su Google Drive</span></label>
+    <div class="form-actions" id="impActions"></div>
+  </dialog>
+
+  <!-- Mentre trascini dei file sopra l'app -->
+  <div class="drop-zone" id="dropZone" hidden>
+    <div class="drop-box">
+      <svg><use href="#i-drop"/></svg>
+      <strong>Rilascia qui i tuoi libri</strong>
+      <span>PDF ed EPUB, anche un'intera cartella</span>
+    </div>
+  </div>
 
   <!-- Lettore integrato -->
   <dialog class="reader" id="dlgReader" aria-label="Lettore">

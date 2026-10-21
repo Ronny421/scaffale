@@ -6,7 +6,7 @@ const VENDOR = new URL('../vendor/', import.meta.url).href;
 
 // ---------------------------------------------------------------- librerie
 let pdfjsPromise = null;
-function loadPdfJs() {
+export function loadPdfJs() {
   if (!pdfjsPromise) {
     pdfjsPromise = import(VENDOR + 'pdfjs/pdf.min.js').then(lib => {
       lib.GlobalWorkerOptions.workerSrc = VENDOR + 'pdfjs/pdf.worker.min.js';
@@ -16,8 +16,18 @@ function loadPdfJs() {
   return pdfjsPromise;
 }
 
+// Opzioni comuni a ogni PDF aperto da Scaffale (lettore e importazione)
+export function pdfOptions() {
+  return {
+    wasmUrl: VENDOR + 'pdfjs/wasm/',   // decodificatori per i PDF scansionati (JBIG2, JPEG 2000)
+    iccUrl: VENDOR + 'pdfjs/iccs/',
+    isEvalSupported: false,            // un PDF non può eseguire codice
+    enableXfa: false,
+  };
+}
+
 let jszipPromise = null;
-function loadJsZip() {
+export function loadJsZip() {
   if (window.JSZip) return Promise.resolve(window.JSZip);
   if (!jszipPromise) {
     jszipPromise = new Promise((resolve, reject) => {
@@ -68,13 +78,7 @@ class PdfEngine {
     const pdfjs = await loadPdfJs();
     const data = new Uint8Array(await blob.arrayBuffer());
     // In PDF.js si chiude il "compito di caricamento", non il documento: lo tengo da parte
-    this.loadingTask = pdfjs.getDocument({
-      data,
-      wasmUrl: VENDOR + 'pdfjs/wasm/',   // decodificatori per i PDF scansionati (JBIG2, JPEG 2000)
-      iccUrl: VENDOR + 'pdfjs/iccs/',
-      isEvalSupported: false,            // un PDF non può eseguire codice
-      enableXfa: false,
-    });
+    this.loadingTask = pdfjs.getDocument({ data, ...pdfOptions() });
     this.doc = await this.loadingTask.promise;
     this.count = this.doc.numPages;
     // Finché una pagina non è stata aperta, uso le dimensioni della prima
@@ -310,12 +314,12 @@ const MIME = {
   svg: 'image/svg+xml', webp: 'image/webp', ttf: 'font/ttf', otf: 'font/otf', woff: 'font/woff',
   woff2: 'font/woff2', mp3: 'audio/mpeg', mp4: 'video/mp4',
 };
-const mimeOf = path => MIME[(path.split('.').pop() || '').toLowerCase()] || 'application/octet-stream';
-const dirOf = path => (path.includes('/') ? path.slice(0, path.lastIndexOf('/') + 1) : '');
+export const mimeOf = path => MIME[(path.split('.').pop() || '').toLowerCase()] || 'application/octet-stream';
+export const dirOf = path => (path.includes('/') ? path.slice(0, path.lastIndexOf('/') + 1) : '');
 const parseXml = text => new DOMParser().parseFromString(text, 'application/xml');
 
 // Risolve un percorso relativo dentro l'archivio ("../Images/a.jpg" da "OEBPS/Text/")
-function join(base, rel) {
+export function join(base, rel) {
   if (!rel) return '';
   rel = rel.split('#')[0];
   try { rel = decodeURIComponent(rel); } catch (e) { /* lascio com'è */ }
@@ -327,6 +331,50 @@ function join(base, rel) {
     else if (p !== '.' && p !== '') out.push(p);
   }
   return out.join('/');
+}
+
+// Protezione DRM: il negozio cifra i capitoli e solo i dispositivi e le app autorizzati hanno
+// la chiave per leggerli. Va distinta dall'"offuscamento" dei font, che nasconde solo i
+// caratteri incorporati e lascia leggibile il testo: in quel caso il libro si apre.
+const FONT_OBFUSCATION = ['http://www.idpf.org/2008/embedding', 'http://ns.adobe.com/pdf/enc#RC'];
+
+export async function epubProtection(zip) {
+  const encrypted = new Set();
+  const enc = zip.file('META-INF/encryption.xml');
+  if (enc) {
+    const doc = parseXml(await enc.async('string'));
+    for (const ed of doc.getElementsByTagNameNS('*', 'EncryptedData')) {
+      const method = ed.getElementsByTagNameNS('*', 'EncryptionMethod')[0];
+      const ref = ed.getElementsByTagNameNS('*', 'CipherReference')[0];
+      const alg = (method && method.getAttribute('Algorithm')) || '';
+      const uri = (ref && ref.getAttribute('URI')) || '';
+      if (uri && !FONT_OBFUSCATION.includes(alg)) encrypted.add(join('', uri));
+    }
+  }
+  const kind = zip.file('META-INF/rights.xml') ? 'adobe'        // Adobe (ADEPT)
+    : zip.file('META-INF/license.lcpl') ? 'lcp'                  // Readium LCP
+    : zip.file('META-INF/sinf.xml') ? 'apple'                    // Apple FairPlay
+    : encrypted.size ? 'protected' : '';
+  return { kind, encrypted };
+}
+
+// Un capitolo cifrato è una sequenza di byte casuali: niente a che vedere con un testo
+export function looksEncrypted(bytes) {
+  const n = Math.min(bytes.length, 1024);
+  if (!n) return false;
+  if ((bytes[0] === 0xFF && bytes[1] === 0xFE) || (bytes[0] === 0xFE && bytes[1] === 0xFF)) return false; // UTF-16
+  let odd = 0;
+  for (let i = 0; i < n; i++) {
+    const b = bytes[i];
+    if (b < 9 || (b > 13 && b < 32) || b === 127) odd++;
+  }
+  return odd / n > 0.05;
+}
+
+export function drmError() {
+  const err = new Error('il file è protetto da DRM');
+  err.code = 'drm';
+  return err;
 }
 
 // Due modalità anche per gli EPUB:
@@ -367,6 +415,7 @@ class EpubEngine {
       .map(r => items.get(r.getAttribute('idref')))
       .filter(it => it && /html/.test(it.type) && this.zip.file(it.href));
     if (!this.spine.length) throw new Error('Questo EPUB non contiene capitoli leggibili');
+    if ((await epubProtection(this.zip)).kind || looksEncrypted(await this.file(this.spine[0].href).async('uint8array'))) throw drmError();
 
     // Lunghezza di ogni capitolo in caratteri: serve per l'avanzamento complessivo
     this.lengths = [];

@@ -1,9 +1,10 @@
 // Service worker: è il "motore" che fa funzionare l'app senza internet.
 // Al primo avvio salva tutti i file dell'app in una cache; poi li serve da lì.
 
-const VERSION = 'scaffale-v1.10.1';
+const VERSION = 'scaffale-v1.11.0';
 const OCR_CACHE = 'scaffale-ocr-v1';
 const FONT_CACHE = 'scaffale-fonts-v1';
+const SHARE_CACHE = 'scaffale-condivisi'; // file ricevuti da "Condividi" su Android, in attesa dell'app
 
 const SHELL = [
   './',
@@ -20,6 +21,7 @@ const SHELL = [
   './js/reader.js',
   './js/drive.js',
   './js/sync.js',
+  './js/importer.js',
   './vendor/jszip.min.js',
   './vendor/pdfjs/pdf.min.js',
   './vendor/pdfjs/pdf.worker.min.js',
@@ -38,7 +40,7 @@ self.addEventListener('install', event => {
 
 self.addEventListener('activate', event => {
   event.waitUntil((async () => {
-    const keep = [VERSION, OCR_CACHE, FONT_CACHE];
+    const keep = [VERSION, OCR_CACHE, FONT_CACHE, SHARE_CACHE];
     for (const k of await caches.keys()) if (!keep.includes(k)) await caches.delete(k);
     await self.clients.claim();
   })());
@@ -46,8 +48,15 @@ self.addEventListener('activate', event => {
 
 self.addEventListener('fetch', event => {
   const req = event.request;
-  if (req.method !== 'GET') return;
   const url = new URL(req.url);
+
+  // Android: Condividi → Scaffale. Il telefono manda i file con un POST all'indirizzo
+  // indicato nel manifest ("share_target"); li metto da parte e apro l'app, che li aggiunge.
+  if (req.method === 'POST' && url.origin === location.origin && url.pathname.endsWith('/condividi')) {
+    event.respondWith(receiveShared(req));
+    return;
+  }
+  if (req.method !== 'GET') return;
 
   // File del lettore di testo (scaricati dall'app dentro la cache OCR)
   if (url.origin === location.origin && url.pathname.includes('/ocr/')) {
@@ -79,3 +88,19 @@ self.addEventListener('fetch', event => {
   }
   // Tutto il resto (ricerche libri online) passa direttamente alla rete
 });
+
+async function receiveShared(req) {
+  let n = 0;
+  try {
+    const data = await req.formData();
+    const cache = await caches.open(SHARE_CACHE);
+    for (const k of await cache.keys()) await cache.delete(k); // avanzi di una condivisione precedente
+    for (const f of data.getAll('libri')) {
+      if (!f || typeof f === 'string' || !f.size) continue;
+      await cache.put(new Request(`./condivisi/${n++}`), new Response(f, {
+        headers: { 'Content-Type': f.type || 'application/octet-stream', 'X-Nome': encodeURIComponent(f.name || 'libro') },
+      }));
+    }
+  } catch (e) { /* l'app dirà che non ha ricevuto file */ }
+  return Response.redirect(new URL(`./?condivisi=${n}`, self.registration.scope).href, 303);
+}

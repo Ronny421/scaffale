@@ -2,16 +2,17 @@ import { db, newId } from './db.js';
 import {
   GENRES, genreColor, hash, buildAuthorResolver, similarAuthor, cleanIsbn, isValidIsbn,
   extractFromText, lookupIsbn, searchByText, fetchCover, getGoogleKey, setGoogleKey, statusReport,
-  getStoredGoogleKey, BUILTIN_GOOGLE_KEY, classifyCode, lookupEan,
+  getStoredGoogleKey, BUILTIN_GOOGLE_KEY, classifyCode, lookupEan, authorKey,
 } from './catalog.js';
 import { barcodeSupported, scanIsbn } from './scanner.js';
 import { ocrReady, downloadOcr, removeOcr, recognize } from './ocr.js';
 import { buildPdf } from './pdf.js';
 import { Reader } from './reader.js';
+import { bookKind, readBookFile, MIME_PDF, MIME_EPUB } from './importer.js';
 import * as drive from './drive.js';
 import * as sync from './sync.js';
 
-const VERSION = '1.10.1';
+const VERSION = '1.11.0';
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -220,7 +221,7 @@ function filtered() {
   const q = state.q.trim().toLowerCase();
   if (!q) return state.books;
   const nq = q.normalize('NFD').replace(/[̀-ͯ]/g, '');
-  return state.books.filter(b => [b.title, b.author, b.isbn, b.publisher, b.genre, b.year].join(' ')
+  return state.books.filter(b => [b.title, b.author, b.isbn, b.publisher, b.genre, b.year, b.digitalOnly ? 'solo digitale ebook' : ''].join(' ')
     .toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').includes(nq));
 }
 
@@ -257,7 +258,7 @@ function rowHtml(b) {
   return `<button class="row" data-id="${b.id}">
     ${url ? `<img class="thumb" src="${url}" alt="" style="--c:${c}">` : `<span class="thumb" style="--c:${c}">${esc(initials(b.title))}</span>`}
     <span><span class="t">${esc(titleOf(b))}</span><span class="a">${esc(b.author || 'Autore sconosciuto')}</span>
-    <span class="meta">${esc([b.year, b.genre, fileLabel(b)].filter(Boolean).join(', '))}</span></span>
+    <span class="meta">${esc([b.year, b.genre, fileLabel(b), b.digitalOnly && 'solo digitale'].filter(Boolean).join(', '))}</span></span>
     ${pct}
   </button>`;
 }
@@ -277,6 +278,7 @@ function render() {
       <div class="art">${cols.map((c, i) => `<i style="background:${c};height:${70 + (i * 37) % 50}px"></i>`).join('')}</div>
       <h2>Lo scaffale è vuoto</h2>
       <p>Tocca <b>Aggiungi libro</b> e inquadra il codice a barre sul retro di un libro: titolo, autore e anno si compilano da soli.</p>
+      ${DEV === 'computer' ? '<p>Hai degli ebook? Trascina qui i file PDF o EPUB, anche un\'intera cartella.</p>' : ''}
     </div>`;
     return;
   }
@@ -330,6 +332,7 @@ function renderDetail(b) {
     b.pages && `<span class="fact">${esc(b.pages)} pagine</span>`,
     b.publisher && `<span class="fact">${esc(b.publisher)}</span>`,
     b.isbn && `<span class="fact">ISBN ${esc(b.isbn)}</span>`,
+    b.digitalOnly && '<span class="fact">Solo digitale</span>',
   ].filter(Boolean).join('');
   $('#detail').innerHTML = `
     <div class="detail-top">
@@ -406,14 +409,21 @@ function digitalHtml(b) {
   } else {
     where = '<p class="where cloud"><svg><use href="#i-cloud"/></svg>Solo su Google Drive: scaricalo per leggerlo anche offline</p>';
   }
+  // Un file protetto si cataloga, ma solo le app autorizzate dal negozio possono aprirlo
+  const drm = (b.file && b.file.drm) || (b.cloud && b.cloud.drm) || '';
+  if (drm) {
+    where += `<p class="where warn"><svg><use href="#i-lock"/></svg>${drm === 'password' ? 'Protetto da password' : 'Protetto da DRM'}: Scaffale non può aprirlo${local ? '. Con «Apri con…» lo passi a un\'app autorizzata' : ''}</p>`;
+  }
   const busy = xfer && xfer.bookId === b.id;
   const primary = [];
-  primary.push(`<button class="btn small" id="fRead"${busy ? ' disabled' : ''}><svg><use href="#i-book"/></svg>${local ? 'Leggi' : 'Scarica e leggi'}</button>`);
+  if (!drm) primary.push(`<button class="btn small" id="fRead"${busy ? ' disabled' : ''}><svg><use href="#i-book"/></svg>${local ? 'Leggi' : 'Scarica e leggi'}</button>`);
+  else if (local) primary.push('<button class="btn small" id="fOpen">Apri con…</button>');
   if (local && !cloud && driveOn) primary.push(`<button class="btn ghost small" id="fUpload"${busy ? ' disabled' : ''}><svg><use href="#i-up"/></svg>Carica su Drive</button>`);
   if (differs && driveOn) primary.push(`<button class="btn ghost small" id="fUpload"${busy ? ' disabled' : ''}><svg><use href="#i-up"/></svg>Sostituisci su Drive</button>`);
   if (!local && cloud) primary.push(`<button class="btn ghost small" id="fDownload"${busy ? ' disabled' : ''}><svg><use href="#i-down"/></svg>Scarica sul ${DEV}</button>`);
   const more = [];
-  if (local) more.push('<button class="btn ghost small" id="fOpen">Apri con…</button>', '<button class="btn ghost small" id="fSave">Salva nei Download</button>');
+  if (local && !drm) more.push('<button class="btn ghost small" id="fOpen">Apri con…</button>');
+  if (local) more.push('<button class="btn ghost small" id="fSave">Salva nei Download</button>');
   if (local && cloud) more.push('<button class="btn ghost small" id="fFree">Libera spazio sul ' + DEV + '</button>');
   if (cloud) more.push('<button class="btn danger small" id="fCloudDelete">Elimina da Drive</button>');
   if (local) more.push(`<button class="btn danger small" id="fRemove">${cloud ? 'Rimuovi dal ' + DEV : 'Rimuovi'}</button>`);
@@ -435,6 +445,13 @@ function driveMessage(err) {
   if (err.reason === 'login') return 'Serve di nuovo l\'accesso a Google: tocca di nuovo il pulsante';
   if (err.reason === 'noclient') return 'Prima collega Google Drive nelle Impostazioni';
   return err.message || 'Operazione su Google Drive non riuscita';
+}
+
+// Come si descrive su Drive il file caricato (viaggia con la sincronizzazione)
+function cloudInfo(id, rec) {
+  const c = { id, name: rec.name, type: rec.type, size: rec.size };
+  if (rec.drm) c.drm = rec.drm;
+  return c;
 }
 
 // Da chiamare dentro un tocco: se serve, apre la finestra di Google
@@ -493,7 +510,7 @@ async function uploadToDrive(b) {
     let old = null;
     const saved = await db.update(b.id, cur => {
       old = cur.cloud && cur.cloud.id;
-      cur.cloud = { id: res.id, name: rec.name, type: rec.type, size: rec.size };
+      cur.cloud = cloudInfo(res.id, rec);
       cur.editedAt = Date.now();
     });
     if (!saved) {
@@ -526,8 +543,9 @@ async function downloadFromDrive(b) {
     const blob = await drive.downloadBook(b.cloud.id, { onProgress: xferProgress, signal: x.ctrl.signal });
     const type = b.cloud.type || blob.type;
     if (!(await db.get(b.id))) { toast('Il libro è stato eliminato durante lo scaricamento'); return false; }
-    await db.files.put({ bookId: b.id, name: b.cloud.name, type, size: blob.size, blob: new Blob([blob], { type }), addedAt: Date.now() });
-    const saved = await db.update(b.id, cur => { cur.file = { name: b.cloud.name, type, size: blob.size }; });
+    const drm = b.cloud.drm ? { drm: b.cloud.drm } : {};
+    await db.files.put({ bookId: b.id, name: b.cloud.name, type, size: blob.size, blob: new Blob([blob], { type }), addedAt: Date.now(), ...drm });
+    const saved = await db.update(b.id, cur => { cur.file = { name: b.cloud.name, type, size: blob.size, ...drm }; });
     if (!saved) { await db.files.remove(b.id); return false; }
     await reload();
     requestPersistence();
@@ -574,29 +592,36 @@ $('#bookFileInput').addEventListener('change', async e => {
   const f = e.target.files[0]; e.target.value = '';
   const b = state.books.find(x => x.id === currentId);
   if (!f || !b) return;
-  const n = f.name.toLowerCase();
-  const type = /epub/.test(f.type) || n.endsWith('.epub') ? 'application/epub+zip'
-    : /pdf/.test(f.type) || n.endsWith('.pdf') ? 'application/pdf' : '';
-  if (!type) { toast('Scegli un file PDF o EPUB'); return; }
+  const kind = bookKind(f);
+  if (!kind) { toast('Scegli un file PDF o EPUB'); return; }
+  const type = kind === 'PDF' ? MIME_PDF : MIME_EPUB;
   // Il browser concede a ogni sito una parte del disco del telefono: controllo che basti
   if (navigator.storage && navigator.storage.estimate) {
     const { usage = 0, quota = 0 } = await navigator.storage.estimate();
     if (quota && quota - usage < f.size * 1.1) { toast('Spazio insufficiente sul ' + DEV + ' per questo file'); return; }
   }
   toast('Salvo il file…', 15000);
+  // Dal file ricavo la copertina (se il libro non ne ha una) e se è protetto da DRM
+  const meta = await readBookFile(f);
+  const drm = meta.drm ? { drm: meta.drm } : {};
   try {
     // Copio i byte in un nuovo Blob: così il file resta nell'app anche se cancelli l'originale
     const blob = new Blob([await f.arrayBuffer()], { type });
-    await db.files.put({ bookId: b.id, name: f.name, type, size: f.size, blob, addedAt: Date.now() });
+    await db.files.put({ bookId: b.id, name: f.name, type, size: f.size, blob, addedAt: Date.now(), ...drm });
   } catch (err) {
     toast('Non sono riuscito a salvare il file: ' + (err.message || err.name));
     return;
   }
-  b.file = { name: f.name, type, size: f.size };
+  b.file = { name: f.name, type, size: f.size, ...drm };
+  if (!b.cover && meta.coverBlob) {
+    const cover = await normalizeCoverBlob(meta.coverBlob);
+    if (cover) { const now = Date.now(); b.cover = cover; b.coverStamp = now; b.coverRev = b.coverLocalRev = now; b.editedAt = now; }
+  }
   if (!(await db.putExisting(b))) { await db.files.remove(b.id); return; }
   requestPersistence();
-  renderDetail(b);
-  toast(b.cloud && !sameFile(b.file, b.cloud) ? 'File salvato: su Drive resta la versione precedente' : 'File salvato su questo ' + DEV);
+  renderDetail(b); render();
+  toast(meta.drm ? 'File salvato, ma è protetto: Scaffale non può aprirlo'
+    : b.cloud && !sameFile(b.file, b.cloud) ? 'File salvato: su Drive resta la versione precedente' : 'File salvato su questo ' + DEV);
 });
 
 // ------------------------------------------------------------ lettore integrato
@@ -658,9 +683,21 @@ async function openReaderFor(book) {
     });
     $('#rView').focus();
   } catch (err) {
-    console.error(err);
+    readingId = null; // nessuna posizione da salvare
     closeSheet($('#dlgReader'));
-    toast('Non riesco ad aprire questo file: ' + (err.message || 'formato non riconosciuto'), 6000);
+    const locked = err.code === 'drm' || /encrypt/i.test(err.message || '') ? 'drm' : err.name === 'PasswordException' ? 'password' : '';
+    if (locked) {
+      toast(locked === 'password' ? 'Questo PDF è protetto da password: Scaffale non può aprirlo'
+        : 'Questo libro è protetto da DRM: si legge solo sui dispositivi e nelle app autorizzati dal negozio, come il tuo e-reader', 8000);
+      // Lo annoto nella scheda, così la prossima volta lo dice subito
+      await db.update(b.id, cur => { if (!cur.file || cur.file.drm) return false; cur.file = { ...cur.file, drm: locked }; }, { quiet: true });
+      await reload();
+      const fresh = state.books.find(x => x.id === b.id);
+      if (fresh && $('#dlgBook').open && currentId === b.id) renderDetail(fresh);
+    } else {
+      console.error(err);
+      toast('Non riesco ad aprire questo file: ' + (err.message || 'formato non riconosciuto'), 6000);
+    }
   } finally {
     $('#rLoading').hidden = true;
   }
@@ -861,6 +898,7 @@ function openForm(data = {}, opts = {}) {
   $('#authorsList').innerHTML = [...new Set(state.books.map(b => b.author).filter(Boolean))].map(a => `<option value="${esc(a)}">`).join('');
   renderGenreChips(data.genre || '');
   fillForm(data);
+  form.elements.digitalOnly.checked = !!data.digitalOnly;
   setCoverPreview(formCtx.cover);
   $('#ocrBox').hidden = true;
   $('#ocrLines').innerHTML = '';
@@ -920,11 +958,15 @@ form.addEventListener('submit', async e => {
     publisher: f.publisher.value.trim(),
     needsLookup: formCtx.needsLookup && !!isbn,
   };
+  if (f.digitalOnly.checked) book.digitalOnly = true;
+  else delete book.digitalOnly;
   book.editedAt = Date.now();
   if (formCtx.coverChanged) {
     book.cover = formCtx.cover; book.coverStamp = Date.now();
     book.coverRev = book.coverLocalRev = book.cover ? Date.now() : undefined;
   }
+  // Un libro che aspettava i dati da internet continua ad aspettarli, finché ne mancano
+  if (formCtx.existing && formCtx.existing.needsLookup && !book.needsLookup) book.needsLookup = canLookup(book) && needsData(book);
   if (book.pages && book.currentPage > book.pages) book.currentPage = book.pages;
   if (book.pagesEstimated && formCtx.existing && book.pages !== formCtx.existing.pages) book.pagesEstimated = false;
   await db.put(book);
@@ -1180,18 +1222,36 @@ const RETRY_EVERY = 20 * 3600 * 1000; // ricerca automatica al massimo una volta
 const MAX_MISSES = 30;                // dopo circa un mese di tentativi a vuoto si smette
 let completing = false;
 
+// Per cercare i dati online serve l'ISBN, oppure almeno titolo e autore
+const canLookup = b => !!(b.isbn || (b.title && b.author));
+// Mancano dati che gli archivi online possono dare
+const needsData = b => !b.title || !b.author || !b.genre || !b.year || !b.pages || !b.cover;
+
+// Senza ISBN cerco per titolo e autore, e accetto solo un risultato con lo stesso titolo e
+// lo stesso autore: meglio nessun dato che i dati di un altro libro
+async function lookupByText(b) {
+  const { results, outcome, detail } = await searchByText(b.title, b.author);
+  const t = normTitle(b.title);
+  const d = results.find(r => normTitle(r.title) === t && sameAuthors(r.author, b.author));
+  if (!d) return { book: null, outcome: results.length ? 'notfound' : outcome, detail };
+  d.coverUrls = [d.isbn && `https://covers.openlibrary.org/b/isbn/${d.isbn}-L.jpg?default=false`, d.coverUrl].filter(Boolean);
+  return { book: d, outcome: 'found' };
+}
+
 async function completePending({ manual = false } = {}) {
   if (completing) return { busy: true };
   if (!navigator.onLine) return null;
   const now = Date.now();
-  const pending = state.books.filter(b => b.needsLookup && b.isbn &&
+  const pending = state.books.filter(b => b.needsLookup && canLookup(b) &&
     (manual || !b.lastLookupAt || now - b.lastLookupAt > RETRY_EVERY));
   if (!pending.length) return null;
   completing = true;
   let ok = 0, missing = 0, problem = null;
   try {
     for (const p of pending.slice(0, manual ? 100 : 10)) {
-      const { book: d, outcome } = await lookupIsbn(p.isbn);
+      let { book: d, outcome } = p.isbn ? await lookupIsbn(p.isbn) : await lookupByText(p);
+      // L'ISBN di un ebook a volte non è negli archivi: provo con titolo e autore
+      if (!d && p.isbn && outcome === 'notfound' && p.title && p.author) ({ book: d, outcome } = await lookupByText(p));
       let cover = null;
       if (d && !p.cover) {
         const blob = await fetchCover(d.coverUrls);
@@ -1256,6 +1316,506 @@ $('#btnComplete').addEventListener('click', async () => {
   }[r.problem] || 'riprova più tardi');
   toast(parts.join('. '), 7000);
 });
+
+// ------------------------------------------------------------ aggiunta da file
+// Trascini, incolli o scegli uno o più PDF ed EPUB: Scaffale legge da ogni file titolo,
+// autore, anno, ISBN e copertina, e crea il libro con il file come copia digitale. Se il libro
+// è già nello scaffale (stesso ISBN, oppure stesso titolo e stesso autore) il file diventa la
+// sua copia digitale, invece di creare un doppione.
+const IMPORT_LIMIT = 300;
+let imp = null; // l'aggiunta in corso: { phase: reading | ready | saving | done, items, … }
+
+function normTitle(t) {
+  return String(t || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .split(/\s*[:(\[]|\s+[-–—]\s+/)[0]
+    .replace(/^(?:l['’]|un['’]|(?:il|lo|la|i|gli|le|un|uno|una|the|a|an)\s+)/, '')
+    .replace(/[^a-z0-9]+/g, ' ').trim();
+}
+function authorWords(a) {
+  return new Set(authorKey(a).split(' ').filter(w => w.length > 1));
+}
+// Stessi autori anche se scritti in modo diverso: "Eco, Umberto" e "Umberto Eco",
+// "Fruttero e Lucentini" e "Carlo Fruttero, Franco Lucentini"
+function sameAuthors(a, b) {
+  const A = authorWords(a), B = authorWords(b);
+  if (!A.size || !B.size) return false;
+  const [small, big] = A.size <= B.size ? [A, B] : [B, A];
+  return [...small].every(w => big.has(w));
+}
+function sameBook(a, b) {
+  if (a.isbns.some(x => b.isbns.includes(x))) return true;
+  const t = normTitle(a.title);
+  return !!t && t === normTitle(b.title) && ((!a.author && !b.author) || sameAuthors(a.author, b.author));
+}
+// Il libro dello scaffale a cui appartiene il file, se c'è già
+function libraryMatch(m) {
+  const byIsbn = state.books.find(b => b.isbn && m.isbns.includes(cleanIsbn(b.isbn)));
+  if (byIsbn) return byIsbn;
+  const t = normTitle(m.title);
+  if (!t || !m.author) return null;
+  return state.books.find(b => b.author && normTitle(b.title) === t && sameAuthors(b.author, m.author)) || null;
+}
+// Se l'autore è già nello scaffale scritto in un altro modo, uso la stessa grafia
+function snapAuthor(a) {
+  if (!a) return '';
+  const k = authorKey(a);
+  const same = state.books.find(b => b.author && authorKey(b.author) === k);
+  return same ? same.author.trim() : a;
+}
+
+// Che cosa succederà a ogni file:
+//   new      nuovo libro            attach  copia digitale di un libro che c'è già
+//   dup      già presente, uguale   hasfile il libro ha già un altro file
+//   twin     stesso libro di un altro file scelto insieme    error  file illeggibile
+function classifyItem(job, it) {
+  const m = it.meta;
+  it.target = null; it.twin = null;
+  if (m.error) { it.status = 'error'; it.checked = false; return; }
+  const twin = job.items.find(o => o.n < it.n && o.meta && !o.meta.error && sameBook(o.meta, m));
+  if (twin) { it.status = 'twin'; it.twin = twin; it.checked = false; return; }
+  const b = libraryMatch(m);
+  if (!b) { it.status = 'new'; it.checked = true; return; }
+  it.target = b;
+  if (b.file) { it.status = sameFile(b.file, m) ? 'dup' : 'hasfile'; it.checked = false; }
+  else { it.status = 'attach'; it.checked = true; }
+}
+
+const DRM_NOTE = {
+  password: 'Protetto da password: lo catalogo, ma Scaffale non può aprirlo',
+  other: 'Protetto da DRM: lo catalogo, ma si legge solo con le app e i dispositivi autorizzati dal negozio',
+};
+function impStateText(it) {
+  const t = it.target ? esc(titleOf(it.target)) : '';
+  const drive = it.cloud === 'ok' ? ' e caricato su Google Drive' : '';
+  if (it.result === 'added') return 'Aggiunto' + drive;
+  if (it.result === 'attached') return `Collegato a «${t}»` + drive;
+  if (it.result === 'failed') return 'Non salvato: ' + esc(it.err || 'errore');
+  if (it.saving) return '<span class="spinner"></span> Salvo…';
+  switch (it.status) {
+    case 'reading': return '<span class="spinner"></span> Leggo il file…';
+    case 'new': return 'Nuovo libro';
+    case 'attach': return `Diventa la copia digitale di «${t}», già nello scaffale` + (it.target.cloud && sameFile(it.target.cloud, it.meta) ? ' (è già su Drive)' : '');
+    case 'dup': return 'Già nello scaffale, con questo stesso file';
+    case 'hasfile': return `«${t}» ha già un altro file: per sostituirlo apri la sua scheda`;
+    case 'twin': return `Stesso libro di «${esc(it.twin.meta.name)}»: ogni libro ha un solo file`;
+    case 'error': return 'Non riesco a leggerlo: ' + esc(it.meta.error);
+  }
+  return '';
+}
+
+function impRowHtml(it) {
+  const job = imp;
+  const m = it.meta || { name: it.file.name, size: it.file.size, kind: bookKind(it.file), title: '', author: '', year: '' };
+  // Finito: la riga mostra il libro com'è ora nello scaffale (i dati da internet arrivano dopo)
+  const b = it.bookId && it.result !== 'failed' ? state.books.find(x => x.id === it.bookId) : null;
+  const title = (b && titleOf(b)) || m.title || m.name;
+  const author = b ? b.author : m.author;
+  const year = b ? b.year : m.year;
+  const url = (b && coverUrl(b)) || it.coverUrl;
+  const cover = url ? `<img class="imp-cover" src="${url}" alt="">`
+    : `<span class="imp-cover" style="--c:${genreColor(b ? b.genre : m.genre)}">${esc(initials(title))}</span>`;
+  const sub = [author, year, `${m.kind || 'File'}, ${formatSize(m.size || 0)}`].filter(Boolean).join(' · ');
+  const notes = [
+    m.drm && `<span class="imp-warn"><svg><use href="#i-lock"/></svg>${DRM_NOTE[m.drm] || DRM_NOTE.other}</span>`,
+    it.cloud === 'failed' && `<span class="imp-warn">Non caricato su Google Drive: ${esc(it.cloudErr || 'errore')}</span>`,
+    it.upload != null && `<span class="progress"><i style="width:${Math.round(it.upload * 100)}%"></i></span>`,
+  ].filter(Boolean).join('');
+  const cls = `imp-row s-${it.status}${it.result ? ' r-' + it.result : ''}`;
+  const body = `${cover}<span class="imp-body"><strong>${esc(title)}</strong><small>${esc(sub)}</small>
+    <span class="imp-state">${impStateText(it)}</span>${notes}</span>`;
+  if (b) return `<button type="button" class="${cls}" data-n="${it.n}" data-id="${b.id}">${body}<svg class="imp-go"><use href="#i-right"/></svg></button>`;
+  const locked = !job || job.phase !== 'ready' || !['new', 'attach'].includes(it.status);
+  return `<label class="${cls}" data-n="${it.n}"><input type="checkbox"${it.checked ? ' checked' : ''}${locked ? ' disabled' : ''} aria-label="Aggiungi ${esc(title)}">${body}</label>`;
+}
+
+function renderImportRow(it) {
+  const el = $(`#impList [data-n="${it.n}"]`);
+  if (el) el.outerHTML = impRowHtml(it);
+}
+function renderImport() {
+  if (!imp) return;
+  $('#impList').innerHTML = imp.items.map(impRowHtml).join('');
+  renderImportChrome();
+}
+const capital = s => s.charAt(0).toUpperCase() + s.slice(1);
+const chosenItems = job => job.items.filter(it => it.checked && ['new', 'attach'].includes(it.status));
+
+function importSummary(job) {
+  const count = r => job.items.filter(it => it.result === r).length;
+  const added = count('added'), attached = count('attached'), failed = count('failed');
+  const parts = [];
+  if (added) parts.push(`${added} ${added === 1 ? 'libro aggiunto' : 'libri aggiunti'}`);
+  if (attached) parts.push(`${attached} ${attached === 1 ? 'file collegato a un libro' : 'file collegati a libri'} che avevi già`);
+  if (failed) parts.push(`${failed} non ${failed === 1 ? 'salvato' : 'salvati'}`);
+  return parts.length ? capital(parts.join(', ')) + '.' : 'Nessun libro aggiunto.';
+}
+
+function renderImportChrome() {
+  const job = imp;
+  if (!job) return;
+  const n = job.items.length;
+  const chosen = chosenItems(job);
+  let title = 'Aggiungi da file', hint = '';
+  if (job.phase === 'reading') {
+    hint = `Leggo i file: ${job.items.filter(it => it.meta).length} di ${n}…`;
+  } else if (job.phase === 'ready') {
+    hint = chosen.length
+      ? 'Titolo, autore e copertina vengono dai file: potrai correggerli dalla scheda di ogni libro. I file restano su questo ' + DEV + '.'
+      : 'Non c\'è niente da aggiungere: questi libri sono già nello scaffale, oppure i file non si leggono.';
+  } else if (job.phase === 'saving') {
+    title = 'Aggiungo i libri…';
+    hint = job.uploading
+      ? `Carico su Google Drive: ${Math.min(job.uploading.done + 1, job.uploading.total)} di ${job.uploading.total}…`
+      : `Salvo i libri: ${job.saved} di ${job.total}…`;
+  } else {
+    title = job.items.some(it => it.result === 'added' || it.result === 'attached') ? 'Libri aggiunti' : 'Nessun libro aggiunto';
+    hint = importSummary(job);
+    if (job.uploadStop) hint += ` ${job.uploadStop}: gli altri file li carichi dalla scheda di ogni libro.`;
+    if (job.lookup === 'running') hint += ' <span class="spinner"></span> Cerco online genere, pagine e copertine mancanti…';
+    else if (job.lookup) hint += ' ' + job.lookup;
+    if (job.items.some(it => it.bookId && it.result !== 'failed')) hint += ' Tocca un libro per aprirlo.';
+  }
+  $('#impTitle').textContent = title;
+  $('#impHint').innerHTML = hint;
+  $('#impSkipped').hidden = !job.skipped;
+  $('#impSkipped').textContent = `${job.skipped} ${job.skipped === 1 ? 'file ignorato: non è' : 'file ignorati: non sono'} PDF o EPUB.`;
+  $('#impDriveRow').hidden = !drive.getClientId() || !['reading', 'ready'].includes(job.phase);
+  const act = $('#impActions');
+  act.classList.toggle('single', job.phase === 'done' || job.phase === 'saving');
+  if (job.phase === 'done') {
+    act.innerHTML = '<button type="button" class="btn" data-close>Fatto</button>';
+  } else if (job.phase === 'saving') {
+    act.innerHTML = job.uploading ? '<button type="button" class="btn ghost" id="impStop">Interrompi i caricamenti</button>' : '';
+  } else {
+    const label = chosen.length === 1 ? 'Aggiungi il libro' : chosen.length ? `Aggiungi ${chosen.length} libri` : 'Aggiungi';
+    act.innerHTML = `<button type="button" class="btn ghost" data-close>Annulla</button>
+      <button type="button" class="btn" id="impGo"${job.phase !== 'ready' || !chosen.length ? ' disabled' : ''}>${label}</button>`;
+  }
+}
+
+// Chiude l'aggiunta (se non sta salvando) e libera le anteprime delle copertine
+function discardImport() {
+  if (!imp) return;
+  imp.cancelled = true;
+  for (const it of imp.items) if (it.coverUrl) URL.revokeObjectURL(it.coverUrl);
+  imp = null;
+}
+
+function startImport(fileList) {
+  // I file nascosti (per esempio "._libro.epub" dei Mac) non sono libri
+  const all = [...fileList].filter(f => f && !/^\./.test(f.name || ''));
+  const books = all.filter(f => bookKind(f));
+  if (!books.length) {
+    toast(all.length ? 'Scaffale aggiunge solo libri in formato PDF o EPUB' : 'Non ho ricevuto nessun file');
+    return;
+  }
+  if (imp && imp.phase === 'saving') { toast('Aspetta che finisca l\'aggiunta in corso'); return; }
+  if (imp && imp.phase === 'done') discardImport();
+  if ($('#dlgAdd').open) closeSheet($('#dlgAdd'));
+  let job = imp;
+  if (!job) {
+    job = imp = { phase: 'reading', items: [], skipped: 0, seq: 0 };
+    try { $('#impDrive').checked = localStorage.getItem('importDrive') === '1'; } catch (e) { /* niente */ }
+  }
+  const path = f => f.webkitRelativePath || f.name;
+  books.sort((a, b) => path(a).localeCompare(path(b), 'it', { numeric: true }));
+  let taken = 0;
+  for (const f of books) {
+    if (job.items.length >= IMPORT_LIMIT) break;
+    if (job.items.some(it => it.file.name === f.name && it.file.size === f.size)) { taken++; continue; }
+    job.items.push({ n: job.seq++, file: f, status: 'reading', checked: false });
+    taken++;
+  }
+  if (taken < books.length) toast(`Aggiungo al massimo ${IMPORT_LIMIT} file alla volta: gli altri aggiungili dopo`, 6000);
+  job.skipped += all.length - books.length;
+  job.phase = 'reading';
+  if (!$('#dlgImport').open) openSheet($('#dlgImport'));
+  renderImport();
+  readImportQueue(job);
+}
+
+// I file si leggono uno alla volta: un PDF grande occupa parecchia memoria
+async function readImportQueue(job) {
+  if (job.reading) return;
+  job.reading = true;
+  try {
+    let it;
+    while (!job.cancelled && (it = job.items.find(x => !x.meta))) {
+      let meta;
+      try { meta = await readBookFile(it.file); } catch (err) { meta = { kind: bookKind(it.file), name: it.file.name, size: it.file.size, isbns: [], error: err.message || 'file illeggibile' }; }
+      if (job.cancelled) return;
+      if (meta.coverBlob) {
+        const small = await normalizeCoverBlob(meta.coverBlob);
+        if (small) { it.cover = small; it.coverUrl = URL.createObjectURL(small); }
+        meta.coverBlob = null;
+      }
+      meta.author = snapAuthor(meta.author);
+      it.meta = meta;
+      classifyItem(job, it);
+      if (imp === job) { renderImportRow(it); renderImportChrome(); }
+    }
+  } finally {
+    job.reading = false;
+  }
+  if (!job.cancelled && imp === job) { job.phase = 'ready'; renderImport(); }
+}
+
+async function saveImported(it) {
+  const m = it.meta;
+  // Copio i byte in un nuovo Blob: il libro resta nell'app anche se poi cancelli il file
+  const blob = new Blob([await it.file.arrayBuffer()], { type: m.type });
+  const info = { name: m.name, type: m.type, size: blob.size };
+  if (m.drm) info.drm = m.drm;
+  const now = Date.now();
+  if (it.status === 'attach') {
+    const id = it.target.id;
+    await db.files.put({ bookId: id, ...info, blob, addedAt: now });
+    const saved = await db.update(id, cur => {
+      cur.file = info;
+      if (!cur.cover && it.cover) { cur.cover = it.cover; cur.coverStamp = now; cur.coverRev = cur.coverLocalRev = now; cur.editedAt = now; }
+    });
+    if (!saved) { await db.files.remove(id); throw new Error('il libro è stato eliminato nel frattempo'); }
+    it.bookId = id;
+    it.result = 'attached';
+    return;
+  }
+  const book = {
+    id: newId(), addedAt: now, currentPage: 0, finished: false,
+    title: m.title, author: m.author, year: m.year, pages: m.pages || '', genre: m.genre,
+    isbn: m.isbn, publisher: m.publisher, digitalOnly: true, editedAt: now, file: info,
+  };
+  if (it.cover) { book.cover = it.cover; book.coverStamp = now; book.coverRev = book.coverLocalRev = now; }
+  book.needsLookup = canLookup(book) && needsData(book);
+  await db.files.put({ bookId: book.id, ...info, blob, addedAt: now });
+  try { await db.put(book); } catch (err) { await db.files.remove(book.id); throw err; }
+  it.bookId = book.id;
+  it.result = 'added';
+}
+
+// Caricamento su Drive dei file appena aggiunti, uno alla volta
+async function uploadImported(job, items) {
+  job.uploading = { ctrl: new AbortController(), done: 0, total: items.length };
+  renderImportChrome();
+  try {
+    for (const it of items) {
+      if (job.uploading.ctrl.signal.aborted) break;
+      const b = await db.get(it.bookId);
+      const rec = b && b.file ? await db.files.get(it.bookId) : null;
+      if (!rec) { job.uploading.done++; continue; }
+      if (b.cloud && sameFile(b.cloud, rec)) { it.cloud = 'ok'; job.uploading.done++; renderImportRow(it); continue; }
+      it.upload = 0; renderImportRow(it); renderImportChrome();
+      try {
+        const res = await drive.uploadBook({
+          blob: rec.blob, name: rec.name, mimeType: rec.type, signal: job.uploading.ctrl.signal,
+          onProgress: p => {
+            it.upload = p;
+            const bar = $(`#impList [data-n="${it.n}"] .progress i`);
+            if (bar) bar.style.width = Math.round(p * 100) + '%';
+          },
+        });
+        let old = null;
+        const saved = await db.update(it.bookId, cur => { old = cur.cloud && cur.cloud.id; cur.cloud = cloudInfo(res.id, rec); cur.editedAt = Date.now(); });
+        if (!saved) sync.queueTrash(res.id); // eliminato mentre caricavo
+        else if (old && old !== res.id) sync.queueTrash(old);
+        it.cloud = 'ok';
+      } catch (err) {
+        if (err.reason === 'aborted') { job.uploadStop = 'Hai interrotto i caricamenti'; break; }
+        it.cloud = 'failed'; it.cloudErr = driveMessage(err);
+        // Inutile insistere con gli altri file: accesso scaduto, Drive pieno, niente rete
+        if (['login', 'noclient', 'storageQuotaExceeded', 'offline'].includes(err.reason)) { job.uploadStop = driveMessage(err); break; }
+      } finally {
+        delete it.upload;
+        await reload();
+        renderImportRow(it);
+      }
+      job.uploading.done++;
+      renderImportChrome();
+    }
+  } finally {
+    job.uploading = null;
+  }
+}
+
+async function runImport() {
+  const job = imp;
+  if (!job || job.phase !== 'ready') return;
+  const chosen = chosenItems(job);
+  if (!chosen.length) return;
+  const wantDrive = !$('#impDriveRow').hidden && $('#impDrive').checked;
+  try { localStorage.setItem('importDrive', wantDrive ? '1' : ''); } catch (e) { /* niente */ }
+  // La finestra di Google si apre solo durante il tocco: la chiedo per prima cosa
+  if (wantDrive && !(await ensureDrive())) return;
+  if (navigator.storage && navigator.storage.estimate) {
+    const need = chosen.reduce((s, it) => s + it.file.size, 0);
+    const { usage = 0, quota = 0 } = await navigator.storage.estimate();
+    if (quota && quota - usage < need * 1.1) { toast(`Spazio insufficiente sul ${DEV}: servono circa ${formatSize(need)}`, 6000); return; }
+  }
+  job.phase = 'saving'; job.total = chosen.length; job.saved = 0;
+  renderImport();
+  for (const it of chosen) {
+    it.saving = true; renderImportRow(it);
+    try { await saveImported(it); } catch (err) { it.result = 'failed'; it.err = err.message || err.name; }
+    it.saving = false; job.saved++;
+    renderImportRow(it); renderImportChrome();
+  }
+  requestPersistence();
+  await reload();
+  const ok = chosen.filter(it => it.result === 'added' || it.result === 'attached');
+  if (wantDrive && ok.length) await uploadImported(job, ok);
+  job.phase = 'done';
+  // Se intanto hai chiuso la finestra, il risultato arriva come messaggio
+  const visible = () => imp === job && $('#dlgImport').open;
+  if (visible()) renderImport();
+  else toast(importSummary(job), 6000);
+  sync.schedule(1500);
+  // I dati che i file non contengono (genere, pagine, copertina) arrivano da internet
+  if (navigator.onLine && ok.some(it => (state.books.find(b => b.id === it.bookId) || {}).needsLookup)) {
+    job.lookup = 'running';
+    if (visible()) renderImportChrome();
+    const r = await completePending({ manual: true });
+    job.lookup = r && r.ok ? `Ho trovato online i dati mancanti di ${r.ok} ${r.ok === 1 ? 'libro' : 'libri'}.`
+      : r && r.problem ? 'Gli archivi online non rispondono: completerò i dati più tardi, da sola.'
+      : r && !r.busy ? 'Gli archivi online non hanno altri dati su questi libri: riproverò nei prossimi giorni.' : '';
+    if (visible()) renderImport();
+    else if (r && r.ok) toast(job.lookup, 5000);
+  }
+  if (imp === job && !$('#dlgImport').open) discardImport();
+}
+
+$('#addFile').addEventListener('click', () => $('#importInput').click());
+$('#addFolder').addEventListener('click', () => $('#folderInput').click());
+for (const id of ['#importInput', '#folderInput']) {
+  $(id).addEventListener('change', e => {
+    const files = [...e.target.files];
+    e.target.value = '';
+    if (files.length) startImport(files);
+  });
+}
+$('#impList').addEventListener('change', e => {
+  const row = e.target.closest('[data-n]');
+  if (!row || !imp || e.target.type !== 'checkbox') return;
+  const it = imp.items.find(x => x.n === +row.dataset.n);
+  if (it) { it.checked = e.target.checked; renderImportChrome(); }
+});
+$('#impList').addEventListener('click', e => {
+  const row = e.target.closest('button[data-id]');
+  if (!row) return;
+  closeSheet($('#dlgImport'));
+  openDetail(row.dataset.id);
+});
+$('#dlgImport').addEventListener('click', e => {
+  if (e.target.closest('#impGo')) runImport();
+  else if (e.target.closest('#impStop') && imp && imp.uploading) imp.uploading.ctrl.abort();
+});
+$('#dlgImport').addEventListener('sheetclosed', () => {
+  $('#dlgImport').classList.remove('dragging');
+  if (imp && imp.phase !== 'saving') discardImport(); // se sta salvando, finisce da sola
+});
+
+// --- Trascinare i file sopra l'app (dal computer)
+// Il browser, se nessuno lo ferma, apre il file trascinato al posto dell'app: per questo
+// "dragover" e "drop" vanno sempre intercettati quando si trascinano dei file.
+const draggingFiles = e => !!e.dataTransfer && [...(e.dataTransfer.types || [])].includes('Files');
+const canImportNow = () => openStack.every(d => d.id === 'dlgAdd' || d.id === 'dlgImport');
+let dragDepth = 0;
+function showDropTarget(on) {
+  if (on && $('#dlgAdd').open) closeSheet($('#dlgAdd')); // il foglio «Aggiungi» coprirebbe la zona
+  const inSheet = $('#dlgImport').open;
+  $('#dropZone').hidden = !on || inSheet;
+  $('#dlgImport').classList.toggle('dragging', on && inSheet);
+}
+window.addEventListener('dragenter', e => {
+  if (!draggingFiles(e)) return;
+  e.preventDefault();
+  dragDepth++;
+  if (canImportNow() && !(imp && imp.phase === 'saving')) showDropTarget(true);
+});
+window.addEventListener('dragover', e => {
+  if (!draggingFiles(e)) return;
+  e.preventDefault();
+  e.dataTransfer.dropEffect = canImportNow() ? 'copy' : 'none';
+});
+window.addEventListener('dragleave', e => {
+  if (!draggingFiles(e)) return;
+  dragDepth = Math.max(0, dragDepth - 1);
+  if (!dragDepth) showDropTarget(false);
+});
+window.addEventListener('drop', e => {
+  if (!draggingFiles(e)) return;
+  e.preventDefault();
+  dragDepth = 0;
+  showDropTarget(false);
+  if (!canImportNow()) { toast('Chiudi la finestra aperta, poi trascina di nuovo i file'); return; }
+  filesFromDrop(e.dataTransfer).then(startImport);
+});
+
+// Una cartella trascinata arriva come "voce" da esplorare: la leggo con le sottocartelle.
+// Le voci vanno chieste subito, durante l'evento: dopo il browser non le dà più.
+function filesFromDrop(dt) {
+  const fileItems = [...(dt.items || [])].filter(i => i.kind === 'file');
+  const entries = fileItems.map(i => (i.webkitGetAsEntry ? i.webkitGetAsEntry() : null));
+  if (!entries.some(en => en && en.isDirectory)) return Promise.resolve([...(dt.files || [])]);
+  const plain = fileItems.map(i => i.getAsFile());
+  const out = [];
+  const walk = async (entry, depth) => {
+    if (out.length >= IMPORT_LIMIT * 4) return;
+    if (entry.isFile) {
+      const f = await new Promise((res, rej) => entry.file(res, rej)).catch(() => null);
+      if (f) out.push(f);
+    } else if (entry.isDirectory && depth < 8) {
+      const reader = entry.createReader();
+      for (;;) { // readEntries restituisce i contenuti a blocchi
+        const batch = await new Promise((res, rej) => reader.readEntries(res, rej)).catch(() => []);
+        if (!batch.length) break;
+        for (const child of batch) await walk(child, depth + 1);
+      }
+    }
+  };
+  return (async () => {
+    for (let i = 0; i < entries.length; i++) {
+      if (entries[i]) await walk(entries[i], 0);
+      else if (plain[i]) out.push(plain[i]);
+    }
+    return out;
+  })();
+}
+
+// --- Incollare i file copiati (Ctrl+C in Esplora file, Ctrl+V in Scaffale)
+document.addEventListener('paste', e => {
+  const files = [...((e.clipboardData && e.clipboardData.files) || [])];
+  if (!files.some(f => bookKind(f))) return; // testo o immagini: non riguarda l'aggiunta
+  e.preventDefault();
+  if (!canImportNow()) { toast('Chiudi la finestra aperta, poi incolla di nuovo i file'); return; }
+  startImport(files);
+});
+
+// --- File condivisi da un'altra app di Android (menu Condividi → Scaffale)
+// Il service worker li riceve, li parcheggia nella cache e apre l'app con ?condivisi=N
+async function acceptShared() {
+  const params = new URLSearchParams(location.search);
+  if (!params.has('condivisi')) return;
+  history.replaceState(history.state, '', location.pathname + location.hash);
+  if (!('caches' in window)) return;
+  const cache = await caches.open('scaffale-condivisi');
+  const files = [];
+  for (const req of await cache.keys()) {
+    const res = await cache.match(req);
+    if (res) {
+      const blob = await res.blob();
+      let name = 'libro';
+      try { name = decodeURIComponent(res.headers.get('X-Nome') || 'libro'); } catch (e) { /* lascio il nome generico */ }
+      files.push(new File([blob], name, { type: blob.type }));
+    }
+    await cache.delete(req);
+  }
+  if (files.length) startImport(files);
+  else toast('Non ho ricevuto nessun file: riprova a condividerlo');
+}
+
+if (DEV === 'computer') {
+  $('#addFolder').hidden = false;
+  $('#addFileHint').textContent = 'Scegli uno o più ebook, oppure trascinali nella finestra o incollali con Ctrl+V: titolo, autore e copertina si leggono dal file, che diventa la copia digitale del libro.';
+}
 
 // ------------------------------------------------------------ esporta PDF
 $('#btnExport').addEventListener('click', () => {
@@ -1626,7 +2186,7 @@ window.addEventListener('sync-applied', async () => {
   }
 });
 // Niente sincronizzazioni automatiche mentre leggi o compili una scheda: aspettano la chiusura
-sync.setBusy(() => $('#dlgReader').open || $('#dlgForm').open);
+sync.setBusy(() => $('#dlgReader').open || $('#dlgForm').open || !!(imp && imp.phase === 'saving'));
 $('#dlgForm').addEventListener('sheetclosed', () => sync.schedule(2000));
 
 function startDriveSync() {
@@ -1742,6 +2302,7 @@ if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('sw.js').catch(err => console.warn('SW', err));
 }
 reload().then(() => {
+  acceptShared().catch(err => console.warn('Condivisione', err));
   startDriveSync();
   setTimeout(autoComplete, 4000);
 });

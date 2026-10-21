@@ -33,5 +33,26 @@
       "type": "image/png",
       "purpose": "maskable"
     }
-  ]
+  ],
+  "share_target": {
+    "action": "./condividi",
+    "method": "POST",
+    "enctype": "multipart/form-data",
+    "params": {
+      "title": "titolo",
+      "text": "testo",
+      "files": [
+        {
+          "name": "libri",
+          "accept": [
+            "application/epub+zip",
+            ".epub",
+            ".kepub",
+            "application/pdf",
+            ".pdf"
+          ]
+        }
+      ]
+    }
+  }
 }
