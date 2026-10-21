@@ -12,7 +12,7 @@ import { bookKind, readBookFile, MIME_PDF, MIME_EPUB } from './importer.js';
 import * as drive from './drive.js';
 import * as sync from './sync.js';
 
-const VERSION = '1.11.0';
+const VERSION = '1.12.0';
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -307,6 +307,7 @@ function renderPending() {
 async function reload() {
   state.books = await db.all();
   render();
+  if ($('#dlgSettings').open && !$('#bulkBox').hidden) renderBulk();
 }
 
 // ------------------------------------------------------------- dettaglio
@@ -387,6 +388,8 @@ const sameFile = (a, c) => a && c && a.size === c.size && a.name === c.name;
 
 // Un solo trasferimento alla volta: { bookId, kind: 'up' | 'down', ctrl, progress }
 let xfer = null;
+// Trasferimento di tutti i file insieme (dalle Impostazioni): vedi «Tutti i PDF ed EPUB»
+let bulk = null;
 
 function digitalHtml(b) {
   const local = !!b.file, cloud = !!b.cloud, driveOn = !!drive.getClientId();
@@ -454,8 +457,9 @@ function cloudInfo(id, rec) {
   return c;
 }
 
-// Da chiamare dentro un tocco: se serve, apre la finestra di Google
-async function ensureDrive() {
+// Da chiamare dentro un tocco: se serve, apre la finestra di Google.
+// minValid: quanto deve durare ancora il permesso (per i trasferimenti lunghi)
+async function ensureDrive(minValid) {
   if (!drive.getClientId()) {
     toast('Prima collega Google Drive nelle Impostazioni');
     openSettings('drive');
@@ -464,12 +468,55 @@ async function ensureDrive() {
   try {
     const wasOn = drive.isEnabled();
     if (!wasOn) { await drive.signIn(); refreshDriveSection(); }
-    else await drive.ensureToken(true);
+    else await drive.ensureToken(true, minValid);
     return true;
   } catch (err) {
     toast(driveMessage(err), 6000);
     return false;
   }
+}
+
+// Carica su Drive il file di un libro e lo annota nella scheda. Restituisce false se il
+// libro è stato eliminato nel frattempo: in quel caso il file caricato va nel cestino.
+async function sendToDrive(bookId, rec, { signal, onProgress } = {}) {
+  const res = await drive.uploadBook({ blob: rec.blob, name: rec.name, mimeType: rec.type, onProgress, signal });
+  let old = null;
+  const saved = await db.update(bookId, cur => {
+    old = cur.cloud && cur.cloud.id;
+    cur.cloud = cloudInfo(res.id, rec);
+    cur.editedAt = Date.now();
+  });
+  if (!saved) { sync.queueTrash(res.id); return false; }
+  if (old && old !== res.id) sync.queueTrash(old); // la versione precedente va nel cestino di Drive
+  return true;
+}
+
+// Scarica da Drive il file di un libro e lo salva su questo dispositivo.
+// Restituisce 'ok', 'gone' (libro eliminato nel frattempo) o 'missing' (non è più su Drive)
+async function fetchFromDrive(b, { signal, onProgress } = {}) {
+  let blob;
+  try {
+    blob = await drive.downloadBook(b.cloud.id, { onProgress, signal });
+  } catch (err) {
+    if (err.reason !== 'notFound') throw err;
+    // Il file è stato eliminato da Drive direttamente: tolgo il riferimento
+    await db.update(b.id, cur => { delete cur.cloud; cur.editedAt = Date.now(); });
+    return 'missing';
+  }
+  const type = b.cloud.type || blob.type;
+  const drm = b.cloud.drm ? { drm: b.cloud.drm } : {};
+  if (!(await db.get(b.id))) return 'gone';
+  await db.files.put({ bookId: b.id, name: b.cloud.name, type, size: blob.size, blob: new Blob([blob], { type }), addedAt: Date.now(), ...drm });
+  const saved = await db.update(b.id, cur => { cur.file = { name: b.cloud.name, type, size: blob.size, ...drm }; });
+  if (!saved) { await db.files.remove(b.id); return 'gone'; }
+  return 'ok';
+}
+
+// Il browser concede a ogni sito una parte del disco: c'è posto per altri "bytes"?
+async function roomFor(bytes) {
+  if (!(navigator.storage && navigator.storage.estimate)) return true;
+  const { usage = 0, quota = 0 } = await navigator.storage.estimate();
+  return !quota || quota - usage >= bytes * 1.1;
 }
 
 function startXfer(b, kind) {
@@ -499,26 +546,22 @@ async function forgetLocalFile(b) {
   if (fresh && $('#dlgBook').open && currentId === b.id) renderDetail(fresh);
 }
 
+const transferBusy = () => {
+  if (xfer || bulk) { toast('Aspetta che finisca il trasferimento in corso'); return true; }
+  return false;
+};
+
 async function uploadToDrive(b) {
-  if (xfer) { toast('Aspetta che finisca il trasferimento in corso'); return; }
+  if (transferBusy()) return;
   if (!(await ensureDrive())) return;
   const rec = await db.files.get(b.id);
   if (!rec) { await forgetLocalFile(b); toast('Il file non è su questo ' + DEV); return; }
   const x = startXfer(b, 'up');
   try {
-    const res = await drive.uploadBook({ blob: rec.blob, name: rec.name, mimeType: rec.type, onProgress: xferProgress, signal: x.ctrl.signal });
-    let old = null;
-    const saved = await db.update(b.id, cur => {
-      old = cur.cloud && cur.cloud.id;
-      cur.cloud = cloudInfo(res.id, rec);
-      cur.editedAt = Date.now();
-    });
-    if (!saved) {
-      sync.queueTrash(res.id); // il libro è stato eliminato durante il caricamento
+    if (!(await sendToDrive(b.id, rec, { onProgress: xferProgress, signal: x.ctrl.signal }))) {
       toast('Il libro è stato eliminato durante il caricamento');
       return;
     }
-    if (old && old !== res.id) sync.queueTrash(old); // la versione precedente va nel cestino di Drive
     await reload();
     toast('Caricato su Google Drive');
     sync.schedule(1000);
@@ -531,40 +574,161 @@ async function uploadToDrive(b) {
 
 // Scarica la copia di Drive sul telefono; restituisce true se ci è riuscito
 async function downloadFromDrive(b) {
-  if (xfer) { toast('Aspetta che finisca il trasferimento in corso'); return false; }
+  if (transferBusy()) return false;
   if (!b.cloud) return false;
   if (!(await ensureDrive())) return false;
-  if (navigator.storage && navigator.storage.estimate && b.cloud.size) {
-    const { usage = 0, quota = 0 } = await navigator.storage.estimate();
-    if (quota && quota - usage < b.cloud.size * 1.1) { toast('Spazio insufficiente sul ' + DEV + ' per questo file'); return false; }
-  }
+  if (!(await roomFor(b.cloud.size || 0))) { toast('Spazio insufficiente sul ' + DEV + ' per questo file'); return false; }
   const x = startXfer(b, 'down');
   try {
-    const blob = await drive.downloadBook(b.cloud.id, { onProgress: xferProgress, signal: x.ctrl.signal });
-    const type = b.cloud.type || blob.type;
-    if (!(await db.get(b.id))) { toast('Il libro è stato eliminato durante lo scaricamento'); return false; }
-    const drm = b.cloud.drm ? { drm: b.cloud.drm } : {};
-    await db.files.put({ bookId: b.id, name: b.cloud.name, type, size: blob.size, blob: new Blob([blob], { type }), addedAt: Date.now(), ...drm });
-    const saved = await db.update(b.id, cur => { cur.file = { name: b.cloud.name, type, size: blob.size, ...drm }; });
-    if (!saved) { await db.files.remove(b.id); return false; }
+    const r = await fetchFromDrive(b, { onProgress: xferProgress, signal: x.ctrl.signal });
     await reload();
+    if (r === 'gone') { toast('Il libro è stato eliminato durante lo scaricamento'); return false; }
+    if (r === 'missing') { toast('Il file non è più su Google Drive', 6000); return false; }
     requestPersistence();
     toast('Scaricato sul ' + DEV);
     return true;
   } catch (err) {
-    if (err.reason === 'notFound') {
-      // Il file è stato eliminato da Drive direttamente: tolgo il riferimento
-      await db.update(b.id, cur => { delete cur.cloud; cur.editedAt = Date.now(); });
-      await reload();
-      toast('Il file non è più su Google Drive', 6000);
-    } else if (err.reason !== 'aborted') {
-      toast(driveMessage(err), 6000);
-    }
+    if (err.reason !== 'aborted') toast(driveMessage(err), 6000);
     return false;
   } finally {
     endXfer(); render();
   }
 }
+
+// ------------------------------------------------------------ tutti i PDF ed EPUB insieme
+// Dalle Impostazioni: carica su Drive tutti i file che sono solo su questo dispositivo, o
+// scarica qui tutti quelli che sono solo su Drive. Un file alla volta, con l'avanzamento
+// complessivo; si può interrompere, e premendo di nuovo si riparte da quelli mancanti.
+function bulkLists() {
+  const up = state.books.filter(b => b.file && !b.cloud);
+  const down = state.books.filter(b => b.cloud && !b.file);
+  const bytes = (list, key) => list.reduce((s, b) => s + ((b[key] && b[key].size) || 0), 0);
+  return { up, down, upBytes: bytes(up, 'file'), downBytes: bytes(down, 'cloud'), any: state.books.some(b => b.file || b.cloud) };
+}
+
+function renderBulk() {
+  const box = $('#bulkBox');
+  box.hidden = !drive.isEnabled();
+  if (box.hidden) return;
+  $('#bulkXfer').hidden = !bulk;
+  $('#bulkBtns').hidden = !!bulk;
+  if (bulk) { bulkProgress(); return; }
+  const { up, down, upBytes, downBytes, any } = bulkLists();
+  const parts = [];
+  if (up.length) parts.push(`${up.length} ${up.length === 1 ? 'libro ha' : 'libri hanno'} il file solo su questo ${DEV} (${formatSize(upBytes)}).`);
+  if (down.length) parts.push(`${down.length} ${down.length === 1 ? 'libro ha' : 'libri hanno'} il file solo su Google Drive (${formatSize(downBytes)}).`);
+  if (!parts.length) parts.push(any ? `Tutti i PDF e gli EPUB sono sia su questo ${DEV} sia su Google Drive.` : 'Nessun libro ha ancora un PDF o un EPUB.');
+  $('#bulkInfo').textContent = parts.join(' ');
+  $('#btnBulkUp').hidden = !up.length;
+  $('#btnBulkDown').hidden = !down.length;
+  $('#btnBulkDown').classList.toggle('ghost', !!up.length); // in evidenza quando è l'unica azione
+}
+
+function bulkProgress() {
+  if (!bulk) return;
+  const frac = bulk.bytesTotal ? Math.min(1, (bulk.bytesDone + bulk.curBytes) / bulk.bytesTotal) : bulk.done / bulk.total;
+  const bar = $('#bulkXfer .progress i');
+  if (bar) bar.style.width = (frac * 100).toFixed(1) + '%';
+  const n = Math.min(bulk.done + 1, bulk.total);
+  $('#bulkText').textContent = `${bulk.kind === 'up' ? 'Carico su Drive' : 'Scarico'} ${n} di ${bulk.total}${bulk.current ? ': «' + bulk.current + '»' : ''}`;
+  renderSyncChip();
+}
+
+// Il telefono non deve spegnere lo schermo (e la rete) mentre trasferisce
+let wakeLock = null;
+async function keepAwake(on) {
+  try {
+    if (on && !wakeLock && navigator.wakeLock) wakeLock = await navigator.wakeLock.request('screen');
+    if (!on && wakeLock) { await wakeLock.release(); wakeLock = null; }
+  } catch (e) { wakeLock = null; }
+}
+
+async function bulkTransfer(kind) {
+  if (transferBusy()) return;
+  // Il permesso di Google dura un'ora: se scade entro 20 minuti ne chiedo subito uno nuovo,
+  // ora che c'è il tocco (a metà del trasferimento non si potrebbe aprire la finestra)
+  if (!(await ensureDrive(20 * 60000))) return;
+  await reload();
+  const lists = bulkLists();
+  const list = kind === 'up' ? lists.up : lists.down;
+  if (!list.length) { renderBulk(); return; }
+  if (kind === 'down' && !(await roomFor(lists.downBytes))) {
+    toast(`Spazio insufficiente sul ${DEV}: servono circa ${formatSize(lists.downBytes)}`, 6000);
+    return;
+  }
+  const job = bulk = {
+    kind, ctrl: new AbortController(), total: list.length, done: 0, ok: 0, failed: 0,
+    bytesTotal: kind === 'up' ? lists.upBytes : lists.downBytes, bytesDone: 0, curBytes: 0, current: '',
+  };
+  keepAwake(true);
+  renderBulk();
+  let stop = '';
+  try {
+    for (const b of list) {
+      if (job.ctrl.signal.aborted) { stop = 'Hai interrotto il trasferimento'; break; }
+      const size = ((kind === 'up' ? b.file : b.cloud) || {}).size || 0;
+      job.current = titleOf(b); job.curBytes = 0;
+      bulkProgress();
+      // Ogni file ha il suo «Annulla» nella scheda del libro; «Interrompi» li ferma tutti
+      const ctrl = new AbortController();
+      const stopAll = () => ctrl.abort();
+      job.ctrl.signal.addEventListener('abort', stopAll);
+      xfer = { bookId: b.id, kind, ctrl, progress: 0 };
+      if ($('#dlgBook').open && currentId === b.id) renderDetail(b);
+      const onProgress = p => { job.curBytes = p * size; xferProgress(p); bulkProgress(); };
+      try {
+        if (kind === 'up') {
+          const rec = await db.files.get(b.id);
+          if (!rec) await forgetLocalFile(b); // il file non c'è più: niente da caricare
+          else if (await sendToDrive(b.id, rec, { signal: ctrl.signal, onProgress })) job.ok++;
+        } else {
+          const cur = await db.get(b.id);
+          if (cur && cur.cloud && !cur.file && (await fetchFromDrive(cur, { signal: ctrl.signal, onProgress })) === 'ok') job.ok++;
+        }
+      } catch (err) {
+        if (err.reason === 'aborted') {
+          if (job.ctrl.signal.aborted) { stop = 'Hai interrotto il trasferimento'; break; }
+        } else {
+          job.failed++;
+          // Inutile insistere con gli altri: permesso scaduto, Drive pieno, niente rete
+          if (['login', 'noclient', 'storageQuotaExceeded', 'offline'].includes(err.reason)) {
+            stop = err.reason === 'login' ? 'Il permesso di Google è scaduto' : driveMessage(err);
+            break;
+          }
+        }
+      } finally {
+        job.ctrl.signal.removeEventListener('abort', stopAll);
+        job.done++; job.bytesDone += size; job.curBytes = 0;
+        endXfer();
+      }
+    }
+  } finally {
+    bulk = null;
+    keepAwake(false);
+    await reload();
+    renderBulk(); renderSyncChip();
+    if (kind === 'down') requestPersistence();
+    sync.schedule(1000);
+  }
+  // Il riepilogo: quanti file sono passati e, se ne mancano, come continuare
+  const verb = kind === 'up' ? (job.ok === 1 ? 'caricato su Google Drive' : 'caricati su Google Drive')
+    : (job.ok === 1 ? 'scaricato su questo ' : 'scaricati su questo ') + DEV;
+  const left = job.total - job.ok;
+  let msg = capital(`${job.ok} file ${verb}`);
+  if (stop) msg = `${stop}. ${msg}`;
+  if (left > 0) {
+    msg += `; ${left === 1 ? 'ne manca 1' : `ne mancano ${left}`}: per ${stop ? 'continuare' : 'riprovare'} premi di nuovo «${kind === 'up' ? 'Carica tutti su Drive' : 'Scarica tutti qui'}»`;
+  }
+  toast(msg + '.', 9000);
+}
+
+$('#btnBulkUp').addEventListener('click', () => bulkTransfer('up'));
+$('#btnBulkDown').addEventListener('click', () => bulkTransfer('down'));
+$('#btnBulkStop').addEventListener('click', () => { if (bulk) bulk.ctrl.abort(); });
+// Chiudere la pagina interromperebbe il trasferimento: il browser chiede conferma
+window.addEventListener('beforeunload', e => {
+  if (bulk || (imp && imp.phase === 'saving')) { e.preventDefault(); e.returnValue = ''; }
+});
 
 async function openBookFile(b, how) {
   const rec = await db.files.get(b.id);
@@ -1605,19 +1769,15 @@ async function uploadImported(job, items) {
       if (b.cloud && sameFile(b.cloud, rec)) { it.cloud = 'ok'; job.uploading.done++; renderImportRow(it); continue; }
       it.upload = 0; renderImportRow(it); renderImportChrome();
       try {
-        const res = await drive.uploadBook({
-          blob: rec.blob, name: rec.name, mimeType: rec.type, signal: job.uploading.ctrl.signal,
+        const kept = await sendToDrive(it.bookId, rec, {
+          signal: job.uploading.ctrl.signal,
           onProgress: p => {
             it.upload = p;
             const bar = $(`#impList [data-n="${it.n}"] .progress i`);
             if (bar) bar.style.width = Math.round(p * 100) + '%';
           },
         });
-        let old = null;
-        const saved = await db.update(it.bookId, cur => { old = cur.cloud && cur.cloud.id; cur.cloud = cloudInfo(res.id, rec); cur.editedAt = Date.now(); });
-        if (!saved) sync.queueTrash(res.id); // eliminato mentre caricavo
-        else if (old && old !== res.id) sync.queueTrash(old);
-        it.cloud = 'ok';
+        if (kept) it.cloud = 'ok';
       } catch (err) {
         if (err.reason === 'aborted') { job.uploadStop = 'Hai interrotto i caricamenti'; break; }
         it.cloud = 'failed'; it.cloudErr = driveMessage(err);
@@ -2064,6 +2224,7 @@ function timeLabel(at) {
 
 function refreshDriveSection() {
   const client = drive.getClientId();
+  $('#bulkBox').hidden = true; // ricompare sotto, se sei collegato
   $('#driveSetup').hidden = !!client;
   $('#driveAccount').hidden = !client;
   $('#clientMsg').textContent = '';
@@ -2081,6 +2242,7 @@ function refreshDriveSection() {
     return;
   }
   $('#driveStatus').textContent = `Collegato come ${drive.accountEmail() || 'account Google'}`;
+  renderBulk();
   const parts = [];
   if (st.status === 'syncing') parts.push('Sincronizzazione in corso…');
   else if (st.status === 'error' || st.status === 'offline') parts.push(`Ultima sincronizzazione non riuscita: ${st.error}`);
@@ -2092,6 +2254,12 @@ function refreshDriveSection() {
 function renderSyncChip() {
   const chip = $('#syncChip');
   if (!drive.isEnabled()) { chip.hidden = true; return; }
+  if (bulk) {
+    chip.hidden = false;
+    chip.dataset.state = 'syncing';
+    $('#syncText').textContent = `${bulk.kind === 'up' ? 'Carico i file su Google Drive' : 'Scarico i file da Google Drive'}: ${Math.min(bulk.done + 1, bulk.total)} di ${bulk.total}`;
+    return;
+  }
   const st = sync.status();
   let mode = st.status, text;
   if (!drive.hasToken() && mode !== 'syncing') mode = 'login';
@@ -2121,7 +2289,7 @@ async function syncByTap() {
   }
 }
 
-$('#syncChip').addEventListener('click', syncByTap);
+$('#syncChip').addEventListener('click', () => (bulk ? openSettings('drive') : syncByTap()));
 $('#btnDriveSync').addEventListener('click', syncByTap);
 
 $('#btnDriveSignIn').addEventListener('click', async () => {

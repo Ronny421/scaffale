@@ -290,7 +290,7 @@
     </section>
     <section class="set" id="driveSection">
       <h3>Sincronizzazione con Google Drive</h3>
-      <p class="hint">Collega Scaffale al tuo Google Drive per avere la stessa libreria su telefono e computer. Elenco, segnalibri e copertine si sincronizzano da soli; i PDF e gli EPUB li carichi tu, libro per libro, dalla scheda del libro.</p>
+      <p class="hint">Collega Scaffale al tuo Google Drive per avere la stessa libreria su telefono e computer. Elenco, segnalibri e copertine si sincronizzano da soli; i PDF e gli EPUB li carichi tu: uno per volta dalla scheda del libro, oppure tutti insieme qui sotto.</p>
       <div id="driveSetup">
         <div class="field key-field">
           <span>ID client OAuth di Google</span>
@@ -322,6 +322,19 @@
           <button class="btn ghost small" id="btnDriveSignOut">Esci</button>
         </div>
         <p class="hint" id="driveNote"></p>
+        <div class="bulk" id="bulkBox" hidden>
+          <h4>Tutti i PDF ed EPUB</h4>
+          <p class="hint" id="bulkInfo"></p>
+          <div class="row-btns" id="bulkBtns">
+            <button class="btn small" id="btnBulkUp" hidden><svg><use href="#i-up"/></svg>Carica tutti su Drive</button>
+            <button class="btn ghost small" id="btnBulkDown" hidden><svg><use href="#i-down"/></svg>Scarica tutti qui</button>
+          </div>
+          <div class="bulk-xfer" id="bulkXfer" hidden>
+            <div class="progress"><i></i></div>
+            <div class="xfer-row"><span id="bulkText" aria-live="polite"></span><button type="button" class="btn ghost small" id="btnBulkStop">Interrompi</button></div>
+            <p class="hint">Tieni aperta Scaffale finché non ha finito. Se la chiudi, i file già trasferiti restano: premendo di nuovo il pulsante riparte da quelli mancanti.</p>
+          </div>
+        </div>
         <button type="button" class="link" id="btnClientChange">Cambia ID client</button>
       </div>
     </section>

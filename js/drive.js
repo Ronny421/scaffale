@@ -140,10 +140,15 @@ function requestToken() {
   return pending;
 }
 
-// Restituisce il permesso valido; interactive = true solo dentro un tocco
-export async function ensureToken(interactive) {
-  if (hasToken()) return token.value;
-  if (!interactive) throw new DriveError('Serve di nuovo l\'accesso a Google', 401, 'login');
+// Restituisce il permesso valido; interactive = true solo dentro un tocco.
+// minValid: per i trasferimenti lunghi chiedo subito un permesso nuovo se quello attuale
+// scade prima di quel tempo, altrimenti il trasferimento si fermerebbe a metà.
+export async function ensureToken(interactive, minValid = 60000) {
+  if (token && Date.now() < token.exp - minValid) return token.value;
+  if (!interactive) {
+    if (hasToken()) return token.value;
+    throw new DriveError('Serve di nuovo l\'accesso a Google', 401, 'login');
+  }
   return requestToken();
 }
 

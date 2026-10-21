@@ -1,7 +1,7 @@
 // Service worker: è il "motore" che fa funzionare l'app senza internet.
 // Al primo avvio salva tutti i file dell'app in una cache; poi li serve da lì.
 
-const VERSION = 'scaffale-v1.11.0';
+const VERSION = 'scaffale-v1.12.0';
 const OCR_CACHE = 'scaffale-ocr-v1';
 const FONT_CACHE = 'scaffale-fonts-v1';
 const SHARE_CACHE = 'scaffale-condivisi'; // file ricevuti da "Condividi" su Android, in attesa dell'app

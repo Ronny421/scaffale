@@ -139,6 +139,11 @@ origine `https://ronny421.github.io`. Poi incolli l'ID client nell'app e premi
 - I PDF e gli EPUB li gestisci tu, dalla scheda del libro, come su OneDrive:
   «Carica su Drive», «Scarica sul telefono», «Libera spazio sul telefono»,
   «Elimina da Drive». I file caricati stanno nella cartella «Scaffale» del tuo Drive.
+- Per spostarli tutti insieme: Impostazioni → «Sincronizzazione con Google Drive» →
+  riquadro «Tutti i PDF ed EPUB». «Carica tutti su Drive» carica i file che sono solo su
+  quel dispositivo; «Scarica tutti qui» scarica quelli che sono solo su Drive. Passano uno
+  alla volta: tieni aperta l'app finché non ha finito. Se lo interrompi, o il permesso di
+  Google scade, premi di nuovo il pulsante e riparte da quelli mancanti.
 - Se modifichi lo stesso libro su due dispositivi, vince la modifica più recente;
   il segnalibro si unisce a parte, quindi correggere un titolo sul computer non
   cancella la pagina letta sul telefono.

@@ -495,3 +495,10 @@ button.imp-row { grid-template-columns: 44px minmax(0, 1fr) auto; cursor: pointe
 #dlgImport .form-actions:empty { display: none; }
 .form-actions.single { grid-template-columns: 1fr; }
 .where.warn { color: var(--warn); }
+
+/* Tutti i PDF ed EPUB insieme (Impostazioni, Google Drive) */
+.bulk { margin-top: 14px; padding: 12px 14px; border-radius: 16px; background: var(--surface-2); border: 1px solid var(--line); }
+.bulk h4 { margin: 0 0 4px; font-size: 15px; }
+.bulk-xfer .progress { margin-top: 10px; }
+.bulk-xfer .xfer-row .btn { margin-top: 0; }
+.bulk-xfer .hint { margin-top: 8px; font-size: 13px; }
