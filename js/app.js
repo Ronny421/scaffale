@@ -11,7 +11,7 @@ import { Reader } from './reader.js';
 import * as drive from './drive.js';
 import * as sync from './sync.js';
 
-const VERSION = '1.10.0';
+const VERSION = '1.10.1';
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));

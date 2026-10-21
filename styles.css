@@ -380,13 +380,16 @@ dialog.reader {
   border: 0; padding: 0; margin: 0; width: 100vw; max-width: 100vw; height: 100dvh; max-height: 100dvh;
   background: var(--paper); color: var(--ink); overflow: hidden;
 }
-dialog.reader[open] { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; }
+/* minmax(0, 1fr): la colonna non può allargarsi oltre lo schermo per far stare un titolo
+   lungo su una riga; il titolo si accorcia con i puntini */
+dialog.reader[open] { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; grid-template-columns: minmax(0, 1fr); }
+.reader-top, .reader-bottom, .reader-view { min-width: 0; }
 dialog.reader::backdrop { background: #000; }
 .reader-top, .reader-bottom { display: flex; align-items: center; gap: 8px; padding: 8px 10px; background: var(--surface); }
 .reader-top { padding-top: calc(env(safe-area-inset-top) + 8px); border-bottom: 1px solid var(--line); }
 .reader-bottom { padding-bottom: calc(env(safe-area-inset-bottom) + 8px); border-top: 1px solid var(--line); }
 .reader-top .icon-btn, .reader-bottom .icon-btn { box-shadow: none; background: var(--surface-2); }
-.reader-title { min-width: 0; flex: 1; display: flex; flex-direction: column; }
+.reader-title { min-width: 0; flex: 1; display: flex; flex-direction: column; overflow: hidden; }
 .reader-title strong { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 15px; }
 .reader-title span { font-size: 13px; color: var(--muted); }
 .reader-bottom input[type="range"] { flex: 1; min-width: 60px; margin: 0; }

@@ -271,8 +271,19 @@ class PdfEngine {
     stepScroll(this, this.scroller, -1, this.scroller.clientHeight);
   }
   async goToFraction(f) { this.scrollToPage(Math.max(1, Math.round(f * this.count)), false); }
-  async bigger() { const k = this.snapshot(); this.zoom = Math.min(3, this.zoom + 0.5); this.layout(k); }
-  async smaller() { const k = this.snapshot(); this.zoom = Math.max(1, this.zoom - 0.5); this.layout(k); }
+  // Passi di ingrandimento: 1 = pagina adattata allo schermo; sotto 1 la pagina si rimpicciolisce
+  zoomBy(dir) {
+    const steps = [0.5, 0.75, 1, 1.5, 2, 2.5, 3];
+    let i = steps.findIndex(z => Math.abs(z - this.zoom) < 0.01);
+    if (i < 0) i = steps.indexOf(1);
+    const next = steps[Math.min(steps.length - 1, Math.max(0, i + dir))];
+    if (next === this.zoom) return;
+    const k = this.snapshot();
+    this.zoom = next;
+    this.layout(k);
+  }
+  async bigger() { this.zoomBy(1); }
+  async smaller() { this.zoomBy(-1); }
   async relayout() { const k = this.snapshot(); this.layout(k); }
   async setMode(mode) {
     if (mode === this.mode) return;
