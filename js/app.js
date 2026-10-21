@@ -11,7 +11,7 @@ import { Reader } from './reader.js';
 import * as drive from './drive.js';
 import * as sync from './sync.js';
 
-const VERSION = '1.9.0';
+const VERSION = '1.10.0';
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -474,19 +474,35 @@ function endXfer() {
   if (b && $('#dlgBook').open && currentId === id) renderDetail(b);
 }
 
+// Il file locale non c'è più: tolgo il riferimento dalla versione attuale del libro
+async function forgetLocalFile(b) {
+  await db.update(b.id, cur => { if (!cur.file) return false; delete cur.file; }, { quiet: true });
+  await reload();
+  const fresh = state.books.find(x => x.id === b.id);
+  if (fresh && $('#dlgBook').open && currentId === b.id) renderDetail(fresh);
+}
+
 async function uploadToDrive(b) {
   if (xfer) { toast('Aspetta che finisca il trasferimento in corso'); return; }
   if (!(await ensureDrive())) return;
   const rec = await db.files.get(b.id);
-  if (!rec) { delete b.file; await db.put(b); renderDetail(b); toast('Il file non è su questo ' + DEV); return; }
+  if (!rec) { await forgetLocalFile(b); toast('Il file non è su questo ' + DEV); return; }
   const x = startXfer(b, 'up');
   try {
     const res = await drive.uploadBook({ blob: rec.blob, name: rec.name, mimeType: rec.type, onProgress: xferProgress, signal: x.ctrl.signal });
-    const old = b.cloud && b.cloud.id;
-    b.cloud = { id: res.id, name: rec.name, type: rec.type, size: rec.size };
-    b.editedAt = Date.now();
-    await db.put(b);
+    let old = null;
+    const saved = await db.update(b.id, cur => {
+      old = cur.cloud && cur.cloud.id;
+      cur.cloud = { id: res.id, name: rec.name, type: rec.type, size: rec.size };
+      cur.editedAt = Date.now();
+    });
+    if (!saved) {
+      sync.queueTrash(res.id); // il libro è stato eliminato durante il caricamento
+      toast('Il libro è stato eliminato durante il caricamento');
+      return;
+    }
     if (old && old !== res.id) sync.queueTrash(old); // la versione precedente va nel cestino di Drive
+    await reload();
     toast('Caricato su Google Drive');
     sync.schedule(1000);
   } catch (err) {
@@ -509,16 +525,19 @@ async function downloadFromDrive(b) {
   try {
     const blob = await drive.downloadBook(b.cloud.id, { onProgress: xferProgress, signal: x.ctrl.signal });
     const type = b.cloud.type || blob.type;
+    if (!(await db.get(b.id))) { toast('Il libro è stato eliminato durante lo scaricamento'); return false; }
     await db.files.put({ bookId: b.id, name: b.cloud.name, type, size: blob.size, blob: new Blob([blob], { type }), addedAt: Date.now() });
-    b.file = { name: b.cloud.name, type, size: blob.size };
-    await db.put(b);
+    const saved = await db.update(b.id, cur => { cur.file = { name: b.cloud.name, type, size: blob.size }; });
+    if (!saved) { await db.files.remove(b.id); return false; }
+    await reload();
     requestPersistence();
     toast('Scaricato sul ' + DEV);
     return true;
   } catch (err) {
     if (err.reason === 'notFound') {
       // Il file è stato eliminato da Drive direttamente: tolgo il riferimento
-      delete b.cloud; b.editedAt = Date.now(); await db.put(b);
+      await db.update(b.id, cur => { delete cur.cloud; cur.editedAt = Date.now(); });
+      await reload();
       toast('Il file non è più su Google Drive', 6000);
     } else if (err.reason !== 'aborted') {
       toast(driveMessage(err), 6000);
@@ -532,7 +551,7 @@ async function downloadFromDrive(b) {
 async function openBookFile(b, how) {
   const rec = await db.files.get(b.id);
   if (!rec) {
-    delete b.file; await db.put(b); renderDetail(b);
+    await forgetLocalFile(b);
     toast(b.cloud ? 'Il file è su Google Drive: scaricalo sul ' + DEV : 'Il file non è su questo ' + DEV + ': allegalo di nuovo');
     return;
   }
@@ -574,7 +593,7 @@ $('#bookFileInput').addEventListener('change', async e => {
     return;
   }
   b.file = { name: f.name, type, size: f.size };
-  await db.put(b);
+  if (!(await db.putExisting(b))) { await db.files.remove(b.id); return; }
   requestPersistence();
   renderDetail(b);
   toast(b.cloud && !sameFile(b.file, b.cloud) ? 'File salvato: su Drive resta la versione precedente' : 'File salvato su questo ' + DEV);
@@ -588,7 +607,15 @@ function getReader() {
     reader = new Reader({
       root: $('#dlgReader'), view: $('#rView'), where: $('#rWhere'), range: $('#rRange'),
       prev: $('#rPrev'), next: $('#rNext'), smaller: $('#rSmaller'), bigger: $('#rBigger'),
-    }, { onProgress: readerProgress });
+      modeV: $('#rModeV'), modeH: $('#rModeH'),
+    }, {
+      onProgress: readerProgress,
+      onClose: () => closeSheet($('#dlgReader')),
+      onMode: mode => {
+        try { localStorage.setItem('readerMode', mode); } catch (e) { /* niente */ }
+        toast(mode === 'scroll' ? 'Scorrimento verticale' : 'Pagine affiancate');
+      },
+    });
   }
   return reader;
 }
@@ -600,14 +627,16 @@ function readerColors() {
     : { dark: false, bg: '#FFFFFF', ink: '#1D2340', accent: '#3A3FD4' };
 }
 
-async function openReaderFor(b) {
+async function openReaderFor(book) {
+  let b = book;
   let rec = await db.files.get(b.id);
   if (!rec && b.cloud) {
     if (!(await downloadFromDrive(b))) return;
     rec = await db.files.get(b.id);
+    b = state.books.find(x => x.id === b.id) || b;
   }
   if (!rec) {
-    delete b.file; await db.put(b); renderDetail(b);
+    await forgetLocalFile(b);
     toast('Il file non è su questo ' + DEV + ': allegalo di nuovo');
     return;
   }
@@ -625,6 +654,7 @@ async function openReaderFor(b) {
       blob: rec.blob, kind, pos,
       fontScale: +(localStorage.getItem('readerFont') || 100),
       colors: readerColors(),
+      mode: localStorage.getItem('readerMode') || 'pages',
     });
     $('#rView').focus();
   } catch (err) {
@@ -648,7 +678,7 @@ function readerProgress(p) {
   b.bookmarkAt = Date.now();
   b.readerPos = p.kind === 'pdf' ? { kind: 'pdf', page: p.page } : { kind: 'epub', chapter: p.chapter, frac: p.frac };
   clearTimeout(readTimer);
-  readTimer = setTimeout(() => db.put(b), 600);
+  readTimer = setTimeout(() => db.putExisting(b), 600);
   return `pag. ${b.currentPage} di ${b.pages}${b.pagesEstimated ? ' (stimate)' : ''}`;
 }
 
@@ -658,7 +688,7 @@ $('#dlgReader').addEventListener('sheetclosed', async () => {
   // Prima di tutto salvo il segnalibro: qualunque cosa succeda dopo, la posizione è al sicuro
   const b = state.books.find(x => x.id === readingId);
   readingId = null;
-  if (b) await db.put(b);
+  if (b) await db.putExisting(b);
   const fs = getReader().fontScale();
   if (fs) localStorage.setItem('readerFont', String(fs));
   getReader().close();
@@ -680,7 +710,7 @@ function setPage(v) {
   const p = progress(b);
   $('#bmPct').textContent = status(b) === 'done' ? 'Letto' : p !== null ? Math.round(p * 100) + '%' : '';
   clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => db.put(b), 300);
+  saveTimer = setTimeout(() => { saveTimer = null; db.putExisting(b); }, 300);
 }
 
 $('#dlgBook').addEventListener('click', async e => {
@@ -691,12 +721,12 @@ $('#dlgBook').addEventListener('click', async e => {
   if (e.target.closest('#bmDone')) {
     if (b.pages) b.currentPage = b.pages;
     b.finished = true; b.bookmarkAt = Date.now();
-    await db.put(b); renderDetail(b); toast('Segnato come letto');
+    await db.putExisting(b); renderDetail(b); toast('Segnato come letto');
     return;
   }
   if (e.target.closest('#bmRestart')) {
     b.currentPage = 0; b.finished = false; b.bookmarkAt = Date.now();
-    await db.put(b); renderDetail(b); return;
+    await db.putExisting(b); renderDetail(b); return;
   }
   const by = e.target.closest('.by');
   if (by) {
@@ -705,12 +735,12 @@ $('#dlgBook').addEventListener('click', async e => {
   }
   if (e.target.closest('#fAdd')) { $('#bookFileInput').click(); return; }
   if (e.target.closest('#fUpload')) { uploadToDrive(b); return; }
-  if (e.target.closest('#fDownload')) { downloadFromDrive(b).then(ok => ok && renderDetail(b)); return; }
+  if (e.target.closest('#fDownload')) { downloadFromDrive(b); return; } // la scheda si aggiorna da sola alla fine
   if (e.target.closest('#fCancel')) { if (xfer) xfer.ctrl.abort(); return; }
   if (e.target.closest('#fFree')) {
     await db.files.remove(b.id);
     delete b.file;
-    await db.put(b);
+    await db.putExisting(b);
     renderDetail(b); render();
     toast('Spazio liberato: il libro resta su Google Drive');
     return;
@@ -721,7 +751,7 @@ $('#dlgBook').addEventListener('click', async e => {
     sync.queueTrash(b.cloud.id);
     delete b.cloud;
     b.editedAt = Date.now();
-    await db.put(b);
+    await db.putExisting(b);
     renderDetail(b); render();
     toast('Spostato nel cestino di Google Drive');
     sync.schedule(1000);
@@ -734,7 +764,7 @@ $('#dlgBook').addEventListener('click', async e => {
     if (!confirm(`Rimuovere il file «${b.file.name}» da Scaffale? Il libro resta nello scaffale.`)) return;
     await db.files.remove(b.id);
     delete b.file;
-    await db.put(b);
+    await db.putExisting(b);
     renderDetail(b);
     toast('File rimosso');
     return;
@@ -750,6 +780,11 @@ $('#dlgBook').addEventListener('click', async e => {
     if (b.file) parts.push('Verrà eliminata anche la copia digitale su questo ' + DEV + '.');
     if (b.cloud) parts.push('La copia su Google Drive andrà nel cestino di Drive.');
     if (!confirm(parts.join(' '))) return;
+    // Prima lo tolgo dalla memoria e annullo i salvataggi in sospeso: la chiusura della
+    // scheda non deve poterlo salvare di nuovo
+    clearTimeout(saveTimer); saveTimer = null;
+    state.books = state.books.filter(x => x.id !== b.id);
+    currentId = null;
     if (b.cloud) sync.queueTrash(b.cloud.id);
     sync.recordDeletion(b.id);
     await db.remove(b.id);
@@ -762,9 +797,12 @@ $('#dlgBook').addEventListener('input', e => {
   if (e.target.id === 'bmPage' || e.target.id === 'bmRange') setPage(e.target.value);
 });
 $('#dlgBook').addEventListener('sheetclosed', async () => {
-  clearTimeout(saveTimer);
-  const b = state.books.find(x => x.id === currentId);
-  if (b) await db.put(b);
+  // Salvo solo un segnalibro rimasto in sospeso, e solo se il libro esiste ancora
+  if (saveTimer) {
+    clearTimeout(saveTimer); saveTimer = null;
+    const b = state.books.find(x => x.id === currentId);
+    if (b) await db.putExisting(b);
+  }
   render();
 });
 
@@ -1152,28 +1190,32 @@ async function completePending({ manual = false } = {}) {
   completing = true;
   let ok = 0, missing = 0, problem = null;
   try {
-    for (const b of pending.slice(0, manual ? 100 : 10)) {
-      const { book: d, outcome } = await lookupIsbn(b.isbn);
-      b.lastLookupAt = Date.now();
-      if (d) {
-        for (const k of ['title', 'author', 'year', 'pages', 'publisher', 'genre']) if (!b[k] && d[k]) b[k] = d[k];
-      b.editedAt = Date.now();
-        if (!b.cover) {
-          const blob = await fetchCover(d.coverUrls);
-          const small = blob && await normalizeCoverBlob(blob);
-          if (small) { b.cover = small; b.coverStamp = Date.now(); b.coverRev = b.coverLocalRev = Date.now(); }
-        }
-        b.needsLookup = false;
-        b.lookupMisses = 0;
-        ok++;
-      } else if (outcome === 'notfound') {
-        b.lookupMisses = (b.lookupMisses || 0) + 1;
-        if (b.lookupMisses >= MAX_MISSES) b.needsLookup = false;
-        missing++;
-      } else {
-        problem = outcome; // archivio non disponibile: resta in attesa
+    for (const p of pending.slice(0, manual ? 100 : 10)) {
+      const { book: d, outcome } = await lookupIsbn(p.isbn);
+      let cover = null;
+      if (d && !p.cover) {
+        const blob = await fetchCover(d.coverUrls);
+        cover = blob && await normalizeCoverBlob(blob);
       }
-      await db.put(b);
+      // La ricerca può durare secondi: nel frattempo il libro può essere stato eliminato o
+      // completato a mano. Applico il risultato alla sua versione attuale, se c'è ancora.
+      const saved = await db.update(p.id, b => {
+        if (!b.needsLookup) return false;
+        b.lastLookupAt = Date.now();
+        if (d) {
+          for (const k of ['title', 'author', 'year', 'pages', 'publisher', 'genre']) if (!b[k] && d[k]) b[k] = d[k];
+          b.editedAt = Date.now();
+          if (!b.cover && cover) { b.cover = cover; b.coverStamp = Date.now(); b.coverRev = b.coverLocalRev = Date.now(); }
+          b.needsLookup = false;
+          b.lookupMisses = 0;
+        } else if (outcome === 'notfound') {
+          b.lookupMisses = (b.lookupMisses || 0) + 1;
+          if (b.lookupMisses >= MAX_MISSES) b.needsLookup = false;
+        }
+      }, { quiet: !d });
+      if (saved && d) ok++;
+      else if (saved && outcome === 'notfound') missing++;
+      if (!d && outcome !== 'notfound') problem = outcome; // archivio non disponibile: resta in attesa
       if (['quota', 'badkey', 'blocked', 'offline'].includes(problem)) break; // inutile insistere
     }
   } finally {

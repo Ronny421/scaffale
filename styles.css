@@ -373,9 +373,9 @@ input[type="range"] { width: 100%; margin: 14px 0 4px; accent-color: var(--accen
 .file-name small { display: block; font-weight: 400; color: var(--muted); font-size: 13.5px; margin-top: 2px; }
 
 /* Lettore integrato */
-:root { --paper: #FFFFFF; }
-@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --paper: #141829; } }
-:root[data-theme="dark"] { --paper: #141829; }
+:root { --paper: #FFFFFF; --desk: #E7E9F1; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --paper: #141829; --desk: #0D1020; } }
+:root[data-theme="dark"] { --paper: #141829; --desk: #0D1020; }
 dialog.reader {
   border: 0; padding: 0; margin: 0; width: 100vw; max-width: 100vw; height: 100dvh; max-height: 100dvh;
   background: var(--paper); color: var(--ink); overflow: hidden;
@@ -394,8 +394,21 @@ dialog.reader::backdrop { background: #000; }
 .reader-view { position: relative; overflow: hidden; background: var(--paper); outline: none; }
 dialog.reader.immersive .reader-top, dialog.reader.immersive .reader-bottom { display: none; }
 .epub-frame { border: 0; width: 100%; height: 100%; display: block; background: var(--paper); }
-.pdf-scroll { width: 100%; height: 100%; overflow: auto; display: grid; }
-.pdf-page { display: block; margin: auto; background: #fff; box-shadow: 0 1px 10px rgba(0,0,0,.18); }
+/* PDF: pagine affiancate (mode-h) o una sotto l'altra (mode-v) */
+.pdf-scroll { position: relative; width: 100%; height: 100%; overflow: auto; overscroll-behavior: contain; outline: none; background: var(--desk); }
+.pdf-scroll.mode-h { overflow-x: auto; overflow-y: hidden; scroll-snap-type: x mandatory; scrollbar-width: none; }
+.pdf-scroll.mode-h::-webkit-scrollbar { display: none; }
+.mode-h .pdf-strip { display: flex; height: 100%; }
+.mode-h .pdf-cell {
+  flex: 0 0 var(--cell-w); width: var(--cell-w); height: 100%; display: flex; overflow: auto;
+  scroll-snap-align: start; scroll-snap-stop: always;
+}
+.mode-h .pdf-slot { margin: auto; }
+.mode-v .pdf-strip { display: flex; flex-direction: column; gap: 12px; padding: 12px 0; width: max-content; min-width: 100%; }
+.mode-v .pdf-cell { display: flex; }
+.mode-v .pdf-slot { margin: 0 auto; }
+.pdf-slot { flex: none; background: #fff; box-shadow: 0 1px 10px rgba(0,0,0,.18); }
+.pdf-slot canvas { display: block; width: 100%; height: 100%; }
 .reader-loading { position: absolute; inset: 0; display: grid; place-items: center; gap: 8px; background: var(--paper); color: var(--muted); font-size: 15px; }
 dialog.reader:not([open]) { display: none; }
 
@@ -426,3 +439,9 @@ dialog.reader:not([open]) { display: none; }
 .xfer { margin-top: 12px; }
 .xfer .progress { margin-top: 0; }
 .xfer-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 8px; font-size: 14px; color: var(--muted); }
+
+/* Selettore della modalità di lettura */
+.seg.reader-mode { flex: none; padding: 3px; border-radius: 12px; }
+.seg.reader-mode button { padding: 6px 9px; border-radius: 9px; display: grid; place-items: center; }
+.seg.reader-mode button svg { width: 20px; height: 20px; }
+.seg.reader-mode button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); }

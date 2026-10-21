@@ -73,6 +73,28 @@ export const db = {
   putMany(books, opts) {
     return tx('books', 'readwrite', store => Promise.all(books.map(b => reqP(store.put(b))))).then(r => { changed(opts); return r; });
   },
+  // Salva il libro solo se esiste ancora. Controllo e scrittura avvengono nella stessa
+  // transazione: un salvataggio rimandato non può far ricomparire un libro eliminato.
+  putExisting(book, opts) {
+    let done = false;
+    return tx('books', 'readwrite', store => reqP(store.getKey(book.id)).then(key => {
+      if (key === undefined) return;
+      book.updatedAt = Date.now();
+      done = true;
+      return reqP(store.put(book));
+    })).then(() => { if (done) changed(opts); return done; });
+  },
+  // Modifica la versione più recente del libro (non una copia rimasta in memoria), sempre
+  // in un'unica transazione. Se il libro non c'è più, o fn restituisce false, non scrive nulla.
+  update(id, fn, opts) {
+    let saved = null;
+    return tx('books', 'readwrite', store => reqP(store.get(id)).then(cur => {
+      if (!cur || fn(cur) === false) return;
+      cur.updatedAt = Date.now();
+      saved = cur;
+      return reqP(store.put(cur));
+    })).then(() => { if (saved) changed(opts); return saved; });
+  },
   // Elimina il libro e, se c'è, la sua copia digitale
   remove(id, opts) {
     return tx('books', 'readwrite', store => reqP(store.delete(id)))

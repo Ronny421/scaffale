@@ -77,9 +77,13 @@ include i file, che possono essere molto grandi: conserva gli originali.
 
 Se a un libro hai allegato il PDF o l'EPUB, nella scheda c'è «Leggi». Il lettore
 riparte dal punto in cui avevi lasciato e aggiorna da solo il segnalibro.
+In alto a destra scegli come scorrere il libro, e la scelta viene ricordata:
+- pagine affiancate: trascini in orizzontale e la pagina segue il dito, poi si
+  ferma sulla successiva;
+- scorrimento verticale: il libro scorre in continuo dall'alto in basso; per gli
+  EPUB tutti i capitoli sono uno di seguito all'altro.
 Tocca a destra per andare avanti, a sinistra per tornare indietro, al centro per
-nascondere i comandi; puoi anche scorrere con il dito o, dal computer, usare le
-frecce della tastiera. «A−/A+» cambiano la dimensione del testo degli EPUB,
+nascondere i comandi; dal computer puoi usare le frecce della tastiera. «A−/A+» cambiano la dimensione del testo degli EPUB,
 «−/+» ingrandiscono i PDF. Funziona anche senza internet.
 
 Se il file ha un numero di pagine diverso dall'edizione cartacea, il segnalibro

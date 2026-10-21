@@ -34,6 +34,8 @@
     <symbol id="i-phone" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="6" y="2.5" width="12" height="19" rx="2.5"/><path d="M10.5 18.5h3" stroke-linecap="round"/></g></symbol>
     <symbol id="i-up" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V6M7.5 10.5 12 6l4.5 4.5M5 19h14"/></g></symbol>
     <symbol id="i-down" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v10M7.5 10.5 12 15l4.5-4.5M5 19h14"/></g></symbol>
+    <symbol id="i-hscroll" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="2.5" y="5" width="8" height="14" rx="1.5"/><rect x="13.5" y="5" width="8" height="14" rx="1.5"/></g></symbol>
+    <symbol id="i-vscroll" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="5" y="2.5" width="14" height="8" rx="1.5"/><rect x="5" y="13.5" width="14" height="8" rx="1.5"/></g></symbol>
     <symbol id="i-ribbon" viewBox="0 0 24 24"><path d="M7 3h10v18l-5-4-5 4z" fill="currentColor"/></symbol>
   </svg>
 
@@ -184,6 +186,10 @@
     <div class="reader-top">
       <button class="icon-btn small" id="rClose" aria-label="Chiudi il lettore"><svg><use href="#i-close"/></svg></button>
       <div class="reader-title"><strong id="rTitle"></strong><span id="rWhere"></span></div>
+      <div class="seg reader-mode" role="group" aria-label="Modalità di lettura">
+        <button type="button" id="rModeH" aria-pressed="true" aria-label="Pagine affiancate" title="Pagine affiancate"><svg><use href="#i-hscroll"/></svg></button>
+        <button type="button" id="rModeV" aria-pressed="false" aria-label="Scorrimento verticale" title="Scorrimento verticale"><svg><use href="#i-vscroll"/></svg></button>
+      </div>
     </div>
     <div class="reader-view" id="rView" tabindex="0"></div>
     <div class="reader-bottom">
