@@ -37,6 +37,7 @@
     <symbol id="i-hscroll" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="2.5" y="5" width="8" height="14" rx="1.5"/><rect x="13.5" y="5" width="8" height="14" rx="1.5"/></g></symbol>
     <symbol id="i-vscroll" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="5" y="2.5" width="14" height="8" rx="1.5"/><rect x="5" y="13.5" width="14" height="8" rx="1.5"/></g></symbol>
     <symbol id="i-ribbon" viewBox="0 0 24 24"><path d="M7 3h10v18l-5-4-5 4z" fill="currentColor"/></symbol>
+    <symbol id="i-toc" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 6h16M4 12h10M4 18h13"/><path d="M8 9h12M8 15h9" stroke-width="1.6" opacity=".55"/></g></symbol>
     <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></symbol>
     <symbol id="i-lock" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></g></symbol>
     <symbol id="i-drop" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v11M7.5 9.5 12 14l4.5-4.5"/><path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/></g></symbol>
@@ -219,7 +220,8 @@
   <dialog class="reader" id="dlgReader" aria-label="Lettore">
     <div class="reader-top">
       <button class="icon-btn small" id="rClose" aria-label="Chiudi il lettore"><svg><use href="#i-close"/></svg></button>
-      <div class="reader-title"><strong id="rTitle"></strong><span id="rWhere"></span></div>
+      <div class="reader-title"><strong id="rTitle"></strong><button type="button" class="where-btn" id="rWhere" aria-label="Vai a una pagina"></button></div>
+      <button class="icon-btn small" id="rToc" aria-label="Indice e pagine" title="Indice e pagine"><svg><use href="#i-toc"/></svg></button>
       <div class="seg reader-mode" role="group" aria-label="Modalità di lettura">
         <button type="button" id="rModeH" aria-pressed="true" aria-label="Pagine affiancate" title="Pagine affiancate"><svg><use href="#i-hscroll"/></svg></button>
         <button type="button" id="rModeV" aria-pressed="false" aria-label="Scorrimento verticale" title="Scorrimento verticale"><svg><use href="#i-vscroll"/></svg></button>
@@ -234,6 +236,21 @@
       <button class="btn ghost small" id="rBigger">A+</button>
     </div>
     <div class="reader-loading" id="rLoading" hidden><span class="spinner"></span> Apro il libro…</div>
+  </dialog>
+
+  <!-- Indice del libro e salto a una pagina (sopra il lettore) -->
+  <dialog class="sheet tall" id="dlgToc" aria-labelledby="tocTitle">
+    <div class="grab"></div>
+    <h2 id="tocTitle">Indice</h2>
+    <form class="goto-page" id="tocPageForm" novalidate>
+      <label for="tocPage">Vai alla pagina</label>
+      <input id="tocPage" type="number" inputmode="numeric" min="1" enterkeyhint="go">
+      <span id="tocOf"></span>
+      <button class="btn small" type="submit">Vai</button>
+    </form>
+    <p class="hint" id="tocPageHint"></p>
+    <nav class="toc-list" id="tocList" aria-label="Capitoli"></nav>
+    <button class="btn ghost wide" data-close>Chiudi</button>
   </dialog>
 
   <!-- Esporta PDF -->

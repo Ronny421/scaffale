@@ -294,7 +294,8 @@ async function serverAnswers(url) {
 
 // Esito di ogni archivio:
 //   ok / empty   risponde (con o senza il libro)
-//   quota        limite di richieste esaurito (429, oppure 403 "Daily Limit…")
+//   quota        limite giornaliero esaurito (403 "Daily Limit…", "Queries per day")
+//   rate         troppe richieste in poco tempo (limite al minuto): basta aspettare un minuto
 //   temporary    guasto temporaneo del server (errori 5xx, come il 503 "backendFailed" di Google)
 //   badkey       Google rifiuta la chiave o la configurazione del progetto
 //   blocked      risponde, ma il browser non può leggere la risposta
@@ -307,7 +308,10 @@ function classify(err, usedKey) {
     const text = JSON.stringify(err.body || '');
     const detail = (typeof e === 'object' && e.message) ? e.message : `errore HTTP ${err.status}`;
     if (err.status === 429 || /RESOURCE_EXHAUSTED|rateLimitExceeded|dailyLimitExceeded|quotaExceeded|quota|Daily Limit/i.test(text)) {
-      return { kind: 'quota', detail };
+      // Google ha due limiti: al giorno e al minuto. Il messaggio dice quale è stato superato
+      const daily = /per day|daily|dailyLimit/i.test(text);
+      const perMinute = /minute|100 seconds|rateLimitExceeded|userRateLimit/i.test(text);
+      return { kind: daily && !perMinute ? 'quota' : (perMinute || err.status === 429 ? 'rate' : 'quota'), detail };
     }
     if (err.status >= 500) return { kind: 'temporary', detail };
     if (/API_KEY|API key|keyInvalid|referer|referrer|SERVICE_DISABLED|has not been used|is disabled/i.test(text)) {
@@ -324,7 +328,8 @@ function classify(err, usedKey) {
 const STATUS_TEXT = {
   ok: 'funziona',
   empty: 'funziona',
-  quota: 'limite di richieste esaurito',
+  quota: 'limite giornaliero di ricerche esaurito',
+  rate: 'troppe ricerche in poco tempo (limite al minuto)',
   temporary: 'guasto temporaneo del server',
   badkey: 'rifiuta la chiave',
   blocked: 'risponde, ma il browser non può leggere la risposta',
@@ -369,11 +374,23 @@ const isTransient = err => err instanceof HttpError && err.status >= 500;
 // in modo intermittente: la stessa richiesta poco dopo riesce. Si riprova quindi con
 // attese crescenti (exponential backoff) più un po' di casualità ("jitter"), così
 // tanti telefoni non riprovano tutti nello stesso istante.
+// Fra una richiesta a Google e la successiva passa almeno un secondo, chiunque la faccia:
+// così le ricerche fatte in serie non superano mai il limite al minuto della chiave
+const GOOGLE_GAP = 1000;
+let googleNext = 0;
+async function googleTurn() {
+  const now = Date.now();
+  const at = Math.max(now, googleNext);
+  googleNext = at + GOOGLE_GAP;
+  if (at > now) await sleep(at - now);
+}
+
 async function googleFetch(query, extra = '') {
   const delays = [0, 600, 1500];
   let lastErr;
   for (const d of delays) {
     if (d) await sleep(d + Math.random() * 300);
+    await googleTurn();
     try {
       return await fetchJson(googleUrl(query, extra));
     } catch (err) {
@@ -472,7 +489,7 @@ function merge(base, extra) {
 }
 
 // Restituisce { book, outcome, status, details, detail }
-// outcome: found | notfound | quota | temporary | badkey | blocked | error | unreachable | offline
+// outcome: found | notfound | quota | rate | temporary | badkey | blocked | error | unreachable | offline
 export async function lookupIsbn(raw) {
   const isbn = cleanIsbn(raw);
   const usedKey = !!getGoogleKey();
@@ -504,7 +521,7 @@ export async function lookupIsbn(raw) {
   }
   const g = status.google;
   let outcome = 'notfound';
-  if (['quota', 'temporary', 'badkey', 'blocked', 'error'].includes(g)) outcome = g;
+  if (['quota', 'rate', 'temporary', 'badkey', 'blocked', 'error'].includes(g)) outcome = g;
   else if (g === 'unreachable') outcome = Object.values(status).every(v => v === 'unreachable') ? 'offline' : 'unreachable';
   return { book: null, outcome, status, details, detail: details.google || '' };
 }

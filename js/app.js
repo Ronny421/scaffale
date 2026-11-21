@@ -12,7 +12,7 @@ import { bookKind, readBookFile, MIME_PDF, MIME_EPUB } from './importer.js';
 import * as drive from './drive.js';
 import * as sync from './sync.js';
 
-const VERSION = '1.12.0';
+const VERSION = '1.13.0';
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -52,7 +52,8 @@ const DEV_CAP = DEV.charAt(0).toUpperCase() + DEV.slice(1);
 
 // ---------------------------------------------------------------- utilità
 const LOOKUP_MSG = {
-  quota: 'Google Books ha esaurito il limite di ricerche, e gli altri archivi non hanno questo libro. Salvalo pure anche senza titolo: completerai i dati con «Completa ora».',
+  quota: 'Google Books ha esaurito il limite di ricerche di oggi, e gli altri archivi non hanno questo libro. Salvalo pure anche senza titolo: completerai i dati con «Completa ora».',
+  rate: 'Google Books ha ricevuto troppe ricerche in poco tempo: aspetta un minuto e riprova. Il limite giornaliero non c\'entra.',
   badkey: 'Google Books rifiuta la chiave{d}. Apri le Impostazioni e premi «Verifica gli archivi».',
   blocked: 'Google Books risponde, ma il ' + DEV + ' non riesce a leggere la risposta: di solito dipende dalla configurazione della chiave. Apri le Impostazioni e premi «Verifica gli archivi».',
   error: 'Google Books ha risposto con un errore{d}, e gli altri archivi non hanno questo libro.',
@@ -884,6 +885,67 @@ function readerProgress(p) {
 }
 
 $('#rClose').addEventListener('click', () => closeSheet($('#dlgReader')));
+
+// --- Indice del libro e salto a una pagina
+// Le pagine sono quelle dello scaffale (l'edizione del libro): per un PDF con lo stesso numero
+// di pagine il salto è esatto, altrimenti la posizione è in proporzione, come il segnalibro.
+let tocEntries = [];
+function readingBook() { return state.books.find(x => x.id === readingId); }
+function tocTotal(b) { return b.pages || (reader && reader.engine ? reader.engine.units() : 1); }
+function tocPageLabel(e, b) {
+  const total = tocTotal(b);
+  if (e.page && reader.engine.units() === total) return e.page;  // PDF con le pagine dell'edizione
+  return Math.min(total, 1 + Math.floor(e.fraction * total));
+}
+
+async function openToc(focusPage) {
+  const b = readingBook();
+  if (!b || !reader || !reader.engine) return;
+  const total = tocTotal(b);
+  const exact = reader.engine.units() === total && !b.pagesEstimated;
+  $('#tocOf').textContent = `di ${total}`;
+  $('#tocPage').max = total;
+  $('#tocPage').value = Math.max(1, b.currentPage || 1);
+  $('#tocPageHint').textContent = b.pagesEstimated ? 'Le pagine sono stimate dalla lunghezza del testo.'
+    : exact ? '' : 'Le pagine sono quelle dell\'edizione cartacea: nel file la posizione è approssimata.';
+  $('#tocList').innerHTML = '<p class="hint"><span class="spinner"></span> Leggo l\'indice…</p>';
+  openSheet($('#dlgToc'));
+  if (focusPage) { $('#tocPage').focus(); $('#tocPage').select(); }
+  try { tocEntries = await reader.toc(); } catch (err) { console.warn('Indice', err); tocEntries = []; }
+  if (!$('#dlgToc').open) return;
+  if (!tocEntries.length) {
+    $('#tocList').innerHTML = '<p class="hint">Questo libro non ha un indice: puoi andare a una pagina qui sopra.</p>';
+    return;
+  }
+  const cur = reader.currentEntry(tocEntries);
+  $('#tocList').innerHTML = tocEntries.map((e, i) =>
+    `<button type="button" class="toc-item${i === cur ? ' cur' : ''}" data-i="${i}" data-depth="${e.depth}" style="--d:${e.depth}"${i === cur ? ' aria-current="true"' : ''}>
+      <span>${esc(e.title)}</span><small>${tocPageLabel(e, b)}</small></button>`).join('');
+  const el = $('#tocList .cur');
+  if (el && !focusPage) el.scrollIntoView({ block: 'center' });
+}
+
+$('#rToc').addEventListener('click', () => openToc(false));
+$('#rWhere').addEventListener('click', () => openToc(true));
+$('#tocList').addEventListener('click', async e => {
+  const item = e.target.closest('.toc-item');
+  if (!item) return;
+  const entry = tocEntries[+item.dataset.i];
+  closeSheet($('#dlgToc'));
+  await reader.goToEntry(entry);
+  $('#rView').focus();
+});
+$('#tocPageForm').addEventListener('submit', async e => {
+  e.preventDefault();
+  const b = readingBook();
+  if (!b) return;
+  const total = tocTotal(b);
+  const n = parseInt($('#tocPage').value, 10);
+  if (!n || n < 1 || n > total) { toast(`Scrivi un numero di pagina da 1 a ${total}`); $('#tocPage').focus(); return; }
+  closeSheet($('#dlgToc'));
+  await reader.goToPage(n, total);
+  $('#rView').focus();
+});
 $('#dlgReader').addEventListener('sheetclosed', async () => {
   clearTimeout(readTimer);
   // Prima di tutto salvo il segnalibro: qualunque cosa succeda dopo, la posizione è al sicuro
@@ -1348,6 +1410,7 @@ async function handleCode(raw) {
   }
   const short = {
     quota: 'ha il limite di ricerche esaurito',
+    rate: 'ha ricevuto troppe ricerche in poco tempo',
     temporary: 'ha un guasto temporaneo',
     unreachable: 'non è raggiungibile',
     offline: 'non è raggiungibile',
@@ -1402,7 +1465,21 @@ async function lookupByText(b) {
   return { book: d, outcome: 'found' };
 }
 
-async function completePending({ manual = false } = {}) {
+// Un libro alla volta, ogni 5 secondi: tante ricerche tutte insieme (per esempio dopo aver
+// aggiunto molti file) superano il limite al minuto della chiave di Google Books
+const BOOK_GAP = 5000;
+const RATE_WAIT = 65000; // se Google chiede comunque di rallentare, aspetto poco più di un minuto
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+async function lookupOne(p) {
+  let r = p.isbn ? await lookupIsbn(p.isbn) : await lookupByText(p);
+  // L'ISBN di un ebook a volte non è negli archivi: provo con titolo e autore
+  if (!r.book && p.isbn && r.outcome === 'notfound' && p.title && p.author) r = await lookupByText(p);
+  return r;
+}
+
+// onProgress(fatti, totale, attesa): per mostrare l'avanzamento
+async function completePending({ manual = false, onProgress } = {}) {
   if (completing) return { busy: true };
   if (!navigator.onLine) return null;
   const now = Date.now();
@@ -1410,12 +1487,22 @@ async function completePending({ manual = false } = {}) {
     (manual || !b.lastLookupAt || now - b.lastLookupAt > RETRY_EVERY));
   if (!pending.length) return null;
   completing = true;
+  const list = pending.slice(0, manual ? 100 : 10);
   let ok = 0, missing = 0, problem = null;
   try {
-    for (const p of pending.slice(0, manual ? 100 : 10)) {
-      let { book: d, outcome } = p.isbn ? await lookupIsbn(p.isbn) : await lookupByText(p);
-      // L'ISBN di un ebook a volte non è negli archivi: provo con titolo e autore
-      if (!d && p.isbn && outcome === 'notfound' && p.title && p.author) ({ book: d, outcome } = await lookupByText(p));
+    for (let i = 0; i < list.length; i++) {
+      const p = list[i];
+      if (i) await sleep(BOOK_GAP);
+      if (onProgress) onProgress(i, list.length, false);
+      let r, waits = 0;
+      for (;;) {
+        r = await lookupOne(p);
+        if (r.outcome !== 'rate' || waits >= 2 || !navigator.onLine) break;
+        waits++;
+        if (onProgress) onProgress(i, list.length, true);
+        await sleep(RATE_WAIT);
+      }
+      const { book: d, outcome } = r;
       let cover = null;
       if (d && !p.cover) {
         const blob = await fetchCover(d.coverUrls);
@@ -1437,16 +1524,16 @@ async function completePending({ manual = false } = {}) {
           if (b.lookupMisses >= MAX_MISSES) b.needsLookup = false;
         }
       }, { quiet: !d });
-      if (saved && d) ok++;
+      if (saved && d) { ok++; if (ok % 5 === 0) await reload(); } // le copertine compaiono man mano
       else if (saved && outcome === 'notfound') missing++;
       if (!d && outcome !== 'notfound') problem = outcome; // archivio non disponibile: resta in attesa
-      if (['quota', 'badkey', 'blocked', 'offline'].includes(problem)) break; // inutile insistere
+      if (['quota', 'rate', 'badkey', 'blocked', 'offline'].includes(problem)) break; // inutile insistere
     }
   } finally {
     completing = false;
   }
   await reload();
-  return { ok, missing, problem, total: pending.length };
+  return { ok, missing, problem, total: list.length };
 }
 
 // All'avvio e quando torna la connessione, in sottofondo e senza disturbare
@@ -1463,14 +1550,19 @@ async function autoComplete(attempt = 0) {
 $('#btnComplete').addEventListener('click', async () => {
   $('#btnComplete').disabled = true;
   toast('Cerco i dati mancanti…', 20000);
-  const r = await completePending({ manual: true });
+  const r = await completePending({
+    manual: true,
+    onProgress: (i, n, wait) => toast(wait ? 'Google chiede di rallentare: riprendo fra un minuto…'
+      : `Cerco i dati mancanti: libro ${i + 1} di ${n}, uno ogni 5 secondi…`, 70000),
+  });
   $('#btnComplete').disabled = false;
   if (!r) { toast('Non ci sono libri da completare'); return; }
   if (r.busy) { toast('Sto già completando i dati, un attimo…'); return; }
   const parts = [`${r.ok} su ${r.total} libri completati`];
   if (r.missing) parts.push(`${r.missing} non ancora negli archivi: riproverò da sola nei prossimi giorni`);
   if (r.problem) parts.push({
-    quota: 'Google Books ha il limite esaurito: riprova più tardi',
+    quota: 'Google Books ha esaurito le ricerche di oggi: riproverò domani',
+    rate: 'Google Books chiede di rallentare: riprova fra qualche minuto',
     badkey: 'Google rifiuta la chiave: premi «Verifica gli archivi» nelle Impostazioni',
     blocked: 'Google non risponde in modo leggibile: premi «Verifica gli archivi» nelle Impostazioni',
     error: 'Google Books ha risposto con un errore, riprova più tardi',
@@ -1635,7 +1727,11 @@ function renderImportChrome() {
     title = job.items.some(it => it.result === 'added' || it.result === 'attached') ? 'Libri aggiunti' : 'Nessun libro aggiunto';
     hint = importSummary(job);
     if (job.uploadStop) hint += ` ${job.uploadStop}: gli altri file li carichi dalla scheda di ogni libro.`;
-    if (job.lookup === 'running') hint += ' <span class="spinner"></span> Cerco online genere, pagine e copertine mancanti…';
+    if (job.lookup === 'running') {
+      hint += job.lookupStep === 'wait'
+        ? ' <span class="spinner"></span> Google chiede di rallentare: riprendo fra un minuto…'
+        : ` <span class="spinner"></span> Cerco online genere, pagine e copertine mancanti${job.lookupStep ? ': libro ' + job.lookupStep : ''}, uno ogni 5 secondi…`;
+    }
     else if (job.lookup) hint += ' ' + job.lookup;
     if (job.items.some(it => it.bookId && it.result !== 'failed')) hint += ' Tocca un libro per aprirlo.';
   }
@@ -1832,7 +1928,10 @@ async function runImport() {
   if (navigator.onLine && ok.some(it => (state.books.find(b => b.id === it.bookId) || {}).needsLookup)) {
     job.lookup = 'running';
     if (visible()) renderImportChrome();
-    const r = await completePending({ manual: true });
+    const r = await completePending({
+      manual: true,
+      onProgress: (i, n, wait) => { job.lookupStep = wait ? 'wait' : `${i + 1} di ${n}`; if (visible()) renderImportChrome(); },
+    });
     job.lookup = r && r.ok ? `Ho trovato online i dati mancanti di ${r.ok} ${r.ok === 1 ? 'libro' : 'libri'}.`
       : r && r.problem ? 'Gli archivi online non rispondono: completerò i dati più tardi, da sola.'
       : r && !r.busy ? 'Gli archivi online non hanno altri dati su questi libri: riproverò nei prossimi giorni.' : '';
@@ -2087,13 +2186,14 @@ async function runLookupTest() {
     : 'Nessuna chiave in uso: Google Books riceve richieste anonime.';
   const { status, details } = await lookupIsbn(TEST_ISBN);
   const rows = statusReport(status, details);
-  const cls = k => (k === 'ok' || k === 'empty') ? '' : k === 'quota' ? 'warn' : 'bad';
+  const cls = k => (k === 'ok' || k === 'empty') ? '' : (k === 'quota' || k === 'rate') ? 'warn' : 'bad';
   const olWorks = ['ok', 'empty'].includes(status.openlibrary) || ['ok', 'empty'].includes(status.olsearch);
   const verdicts = {
     ok: key ? `Tutto a posto: ${whose} funziona.` : 'Tutto a posto per ora.',
     empty: key ? `Tutto a posto: ${whose} funziona.` : 'Tutto a posto per ora.',
+    rate: `Google ha ricevuto troppe ricerche in poco tempo con ${key ? whose : 'le richieste anonime'}: è il limite al minuto, non quello giornaliero. Fra un minuto funziona di nuovo.`,
     quota: key
-      ? `Hai esaurito le ricerche di oggi con ${whose}: si azzerano ogni giorno.`
+      ? `Hai esaurito le ricerche di oggi con ${whose}: si azzerano ogni giorno alle 9 del mattino (ora italiana).`
       : 'Google Books rifiuta le richieste anonime: è il limite condiviso. Salva la tua chiave qui sopra.',
     badkey: 'Google rifiuta la chiave: il motivo è nel suo messaggio qui sopra. Controlla nella console che la Books API sia abilitata nello stesso progetto della chiave, e che la restrizione del sito sia https://ronny421.github.io/* . Dopo ogni modifica aspetta qualche minuto.',
     blocked: 'Google risponde, ma il browser non può leggere la risposta. Prova a togliere per qualche minuto le restrizioni della chiave: se così funziona, il problema è lì.',

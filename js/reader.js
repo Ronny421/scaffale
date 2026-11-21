@@ -275,6 +275,38 @@ class PdfEngine {
     stepScroll(this, this.scroller, -1, this.scroller.clientHeight);
   }
   async goToFraction(f) { this.scrollToPage(Math.max(1, Math.round(f * this.count)), false); }
+  // Indice: i "segnalibri" (outline) che molti PDF contengono, con la pagina di ogni voce
+  async toc() {
+    if (this.tocCache) return this.tocCache;
+    const out = [];
+    let outline = null;
+    try { outline = await this.doc.getOutline(); } catch (e) { /* PDF senza indice */ }
+    const pageOf = async dest => {
+      try {
+        if (typeof dest === 'string') dest = await this.doc.getDestination(dest);
+        if (!Array.isArray(dest) || dest[0] == null) return null;
+        return typeof dest[0] === 'object' ? (await this.doc.getPageIndex(dest[0])) + 1 : dest[0] + 1;
+      } catch (e) { return null; }
+    };
+    const walk = async (list, depth) => {
+      for (const it of list || []) {
+        if (out.length >= 800) return;
+        const page = await pageOf(it.dest);
+        const title = (it.title || '').replace(/\s+/g, ' ').trim();
+        if (page && title) out.push({ title, depth: Math.min(depth, 3), page, fraction: (page - 1) / this.count });
+        await walk(it.items, depth + 1);
+      }
+    };
+    await walk(outline, 0);
+    this.tocCache = out;
+    return out;
+  }
+  currentEntry(list) {
+    let cur = -1;
+    list.forEach((e, i) => { if (e.page <= this.page) cur = i; });
+    return cur;
+  }
+  async goToEntry(e) { this.scrollToPage(e.page, false); }
   // Passi di ingrandimento: 1 = pagina adattata allo schermo; sotto 1 la pagina si rimpicciolisce
   zoomBy(dir) {
     const steps = [0.5, 0.75, 1, 1.5, 2, 2.5, 3];
@@ -408,8 +440,9 @@ class EpubEngine {
     const opf = parseXml(await this.text(opfPath));
     const items = new Map();
     for (const it of opf.querySelectorAll('manifest > item')) {
-      items.set(it.getAttribute('id'), { href: join(opfDir, it.getAttribute('href')), type: it.getAttribute('media-type') || '' });
+      items.set(it.getAttribute('id'), { href: join(opfDir, it.getAttribute('href')), type: it.getAttribute('media-type') || '', props: it.getAttribute('properties') || '' });
     }
+    this.opfInfo = { opf, items };
     this.spine = [...opf.querySelectorAll('spine > itemref')]
       .filter(r => r.getAttribute('linear') !== 'no')
       .map(r => items.get(r.getAttribute('idref')))
@@ -419,10 +452,13 @@ class EpubEngine {
 
     // Lunghezza di ogni capitolo in caratteri: serve per l'avanzamento complessivo
     this.lengths = [];
+    this.headings = []; // primo titolo di ogni capitolo: serve se il libro non ha un indice
     for (const it of this.spine) {
       const raw = await this.text(it.href);
       const body = raw.replace(/^[\s\S]*?<body[^>]*>/i, '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
       this.lengths.push(Math.max(1, body.length));
+      const h = /<h[1-3][^>]*>([\s\S]*?)<\/h[1-3]>/i.exec(raw);
+      this.headings.push(h ? h[1].replace(/<[^>]+>/g, ' ').replace(/&nbsp;|&#160;/g, ' ').replace(/\s+/g, ' ').trim() : '');
     }
     this.total = this.lengths.reduce((a, b) => a + b, 0);
     this.prefix = this.lengths.map((_, i) => this.lengths.slice(0, i).reduce((a, b) => a + b, 0));
@@ -796,6 +832,95 @@ class EpubEngine {
   // Pagine stimate dell'edizione, se lo scaffale non le conosce (circa 1500 caratteri a pagina)
   units() { return Math.max(1, Math.round(this.total / 1500)); }
 
+  // Indice del libro: EPUB 3 lo scrive in una pagina "nav", EPUB 2 in un file NCX.
+  // Ogni voce punta a un capitolo dello spine e, a volte, a un punto preciso (#ancora).
+  async toc() {
+    if (this.tocCache) return this.tocCache;
+    const { opf, items } = this.opfInfo;
+    const all = [...items.values()];
+    const out = [];
+    const raws = new Map();
+    const add = (title, href, base, depth) => {
+      const t = (title || '').replace(/\s+/g, ' ').trim();
+      if (!t || !href || out.length >= 800) return;
+      const chapter = this.spine.findIndex(it => it.href === join(dirOf(base), href));
+      if (chapter < 0) return;
+      const anchor = href.includes('#') ? decodeURIComponent(href.split('#')[1]) : '';
+      out.push({ title: t, depth: Math.min(depth, 3), chapter, anchor, fraction: this.prefix[chapter] / this.total });
+    };
+    // Una voce che punta a metà capitolo: la sua posizione è il testo che precede l'ancora
+    const placeAnchors = async () => {
+      for (const e of out) {
+        if (!e.anchor) continue;
+        if (!raws.has(e.chapter)) raws.set(e.chapter, await this.text(this.spine[e.chapter].href));
+        const raw = raws.get(e.chapter);
+        const at = raw.search(new RegExp(`id\\s*=\\s*["']${e.anchor.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}["']`));
+        if (at < 0) continue;
+        const before = raw.slice(0, at).replace(/^[\s\S]*?<body[^>]*>/i, '').replace(/<[^>]*$/, '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+        e.fraction = (this.prefix[e.chapter] + Math.min(before.length, this.lengths[e.chapter])) / this.total;
+      }
+    };
+    const nav = all.find(it => /(^|\s)nav(\s|$)/.test(it.props) && this.file(it.href));
+    if (nav) {
+      const doc = new DOMParser().parseFromString(await this.text(nav.href), 'application/xhtml+xml');
+      const navs = doc.querySelector('parsererror') ? [] : [...doc.getElementsByTagNameNS('*', 'nav')];
+      const el = navs.find(n => /toc/.test(n.getAttribute('epub:type') || n.getAttributeNS('http://www.idpf.org/2007/ops', 'type') || '')) || navs[0];
+      const walk = (ol, depth) => {
+        for (const li of [...ol.children].filter(c => c.localName === 'li')) {
+          const a = [...li.children].find(c => c.localName === 'a');
+          if (a) add(a.textContent, a.getAttribute('href'), nav.href, depth);
+          const sub = [...li.children].find(c => c.localName === 'ol');
+          if (sub) walk(sub, a ? depth + 1 : depth);
+        }
+      };
+      const ol = el && [...el.getElementsByTagNameNS('*', 'ol')][0];
+      if (ol) walk(ol, 0);
+    }
+    if (!out.length) {
+      const spineEl = opf.querySelector('spine');
+      const ncx = items.get(spineEl && spineEl.getAttribute('toc')) || all.find(it => /dtbncx/.test(it.type));
+      if (ncx && this.file(ncx.href)) {
+        const doc = parseXml(await this.text(ncx.href));
+        const walk = (parent, depth) => {
+          for (const np of [...parent.children].filter(c => c.localName === 'navPoint')) {
+            const label = [...np.getElementsByTagNameNS('*', 'text')][0];
+            const content = [...np.children].find(c => c.localName === 'content');
+            add(label && label.textContent, content && content.getAttribute('src'), ncx.href, depth);
+            walk(np, depth + 1);
+          }
+        };
+        const map = doc.getElementsByTagNameNS('*', 'navMap')[0];
+        if (map) walk(map, 0);
+      }
+    }
+    // Nessun indice: uso il primo titolo di ogni capitolo
+    if (!out.length && this.spine.length > 1) {
+      this.spine.forEach((_, i) => out.push({ title: this.headings[i] || `Parte ${i + 1}`, depth: 0, chapter: i, anchor: '', fraction: this.prefix[i] / this.total }));
+    }
+    await placeAnchors();
+    this.tocCache = out;
+    return out;
+  }
+
+  // La voce in cui ti trovi: l'ultima che inizia prima del punto di lettura
+  currentEntry(list) {
+    // Nelle pagine affiancate conta tutta la pagina visibile: se un titolo è lì, ci sei
+    const frac = this.mode === 'scroll' ? this.frac : (this.page + 1) / this.pages - 1e-6;
+    const here = (this.prefix[this.chapter] + frac * this.lengths[this.chapter]) / this.total + 1e-6;
+    let cur = -1;
+    list.forEach((e, i) => { if (e.fraction <= here) cur = i; });
+    return cur;
+  }
+
+  async goToEntry(e) {
+    if (this.mode === 'scroll') {
+      const el = (e.anchor && this.fdoc.getElementById(`c${e.chapter}-${e.anchor}`)) || this.fdoc.getElementById(`chap-${e.chapter}`);
+      if (el) { this.se().scrollTop += el.getBoundingClientRect().top; this.trackScroll(); }
+      return;
+    }
+    await this.showChapter(e.chapter, e.anchor ? { anchor: e.anchor } : 0);
+  }
+
   toChapterPos(f) {
     const target = Math.min(0.9999, Math.max(0, f)) * this.total;
     let i = this.prefix.findIndex((p, k) => target < p + this.lengths[k]);
@@ -941,6 +1066,18 @@ export class Reader {
     this.els.range.value = Math.round(p.fraction * 1000);
   }
 
+  // Indice e salto a una pagina
+  async toc() { return this.engine ? this.engine.toc() : []; }
+  currentEntry(list) { return this.engine ? this.engine.currentEntry(list) : -1; }
+  async goToEntry(e) { if (this.engine) await this.engine.goToEntry(e); }
+  // n è una pagina dell'edizione (total pagine). Se il PDF ha proprio quelle pagine il salto è
+  // esatto; altrimenti è in proporzione, come il segnalibro
+  async goToPage(n, total) {
+    const e = this.engine;
+    if (!e) return;
+    if (e instanceof PdfEngine && total === e.count) return e.scrollToPage(n, false);
+    return e.goToFraction(Math.min(0.9999, Math.max(0, (n - 1) / total + 0.0001)));
+  }
   next() { return this.engine && this.engine.next(); }
   prev() { return this.engine && this.engine.prev(); }
   fontScale() { return this.engine instanceof EpubEngine ? this.engine.fontScale : null; }

@@ -58,6 +58,11 @@ in Impostazioni → «Ricerca dei dati online» trovi i passaggi e il pulsante
 La chiave resta salvata solo sul telefono: non va mai scritta nei file del
 repository, che è pubblico.
 
+Quando ci sono molti libri da completare (per esempio dopo averne aggiunti tanti da
+file), Scaffale chiede i dati a Google un libro alla volta, uno ogni 5 secondi: oltre
+al limite di ricerche al giorno, Google ha anche un limite al minuto. Se Google chiede
+comunque di rallentare, Scaffale aspetta un minuto e riprende da sola.
+
 ## Libri appena usciti
 
 Gli archivi online aggiungono i libri nuovi qualche giorno o settimana dopo
@@ -117,6 +122,11 @@ In alto a destra scegli come scorrere il libro, e la scelta viene ricordata:
   ferma sulla successiva;
 - scorrimento verticale: il libro scorre in continuo dall'alto in basso; per gli
   EPUB tutti i capitoli sono uno di seguito all'altro.
+Il pulsante con le righe, in alto, apre l'**indice**: tocca un capitolo per andarci. Lì
+puoi anche scrivere un **numero di pagina** e premere «Vai»; ci arrivi anche toccando
+«pag. X di Y» sotto il titolo. Se il libro non ha un indice, Scaffale elenca i capitoli
+con il loro primo titolo. Le pagine sono quelle dell'edizione del libro: in un EPUB, o in
+un PDF con un numero di pagine diverso, la posizione è approssimata.
 Tocca a destra per andare avanti, a sinistra per tornare indietro, al centro per
 nascondere i comandi; dal computer puoi usare le frecce della tastiera. «A−/A+» cambiano la dimensione del testo degli EPUB,
 «−/+» ingrandiscono i PDF. Funziona anche senza internet.
